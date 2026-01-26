@@ -1,0 +1,15 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: citeen_postgis
+    environment:
+      POSTGRES_USER: citeen
+      POSTGRES_PASSWORD: Citeen26.
+      POSTGRES_DB: citeen
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+
+volumes:
+  postgis_data:
