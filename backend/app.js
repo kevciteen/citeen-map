@@ -52,6 +52,42 @@ function parseOptionalNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function buildLonLatBbox(minLon, minLat, maxLon, maxLat, startIndex = 1) {
+  return {
+    clause: `lon BETWEEN $${startIndex} AND $${startIndex + 1} AND lat BETWEEN $${startIndex + 2} AND $${startIndex + 3}`,
+    params: [minLon, maxLon, minLat, maxLat],
+  };
+}
+
+function buildRadiusBounds(lat, lon, radiusMeters) {
+  const latDelta = radiusMeters / 111320;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const lonDelta = radiusMeters / (111320 * Math.max(Math.abs(cosLat), 0.2));
+
+  return {
+    minLon: lon - lonDelta,
+    maxLon: lon + lonDelta,
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+  };
+}
+
+function haversineDistanceSql(latParamIndex, lonParamIndex) {
+  return `
+    6371000 * acos(
+      LEAST(
+        1,
+        GREATEST(
+          -1,
+          cos(radians($${latParamIndex})) * cos(radians(lat)) *
+          cos(radians(lon) - radians($${lonParamIndex})) +
+          sin(radians($${latParamIndex})) * sin(radians(lat))
+        )
+      )
+    )
+  `;
+}
+
 export function buildApp() {
   const app = Fastify({ logger: true });
 
@@ -92,8 +128,10 @@ export function buildApp() {
     const params = [];
     let i = 1;
 
-    where.push(`geom && ST_MakeEnvelope($${i++}, $${i++}, $${i++}, $${i++}, 4326)`);
-    params.push(minLon, minLat, maxLon, maxLat);
+    const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
+    where.push(bboxSql.clause);
+    params.push(...bboxSql.params);
+    i += 4;
 
     if (departement) {
       where.push(`departement = $${i++}`);
@@ -185,7 +223,8 @@ export function buildApp() {
       return reply.code(400).send({ error: "lat/lon invalides" });
     }
 
-    const pointSql = "ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography";
+    const bounds = buildRadiusBounds(lat, lon, r);
+    const distanceSql = haversineDistanceSql(1, 2);
     const sql = `
       SELECT
         id,
@@ -198,14 +237,25 @@ export function buildApp() {
         departement,
         lat,
         lon,
-        ROUND(ST_Distance(geom::geography, ${pointSql}))::int AS distance_m
+        ROUND(${distanceSql})::int AS distance_m
       FROM copros
-      WHERE ST_DWithin(geom::geography, ${pointSql}, $3)
-      ORDER BY ST_Distance(geom::geography, ${pointSql}) ASC
-      LIMIT $4;
+      WHERE lon BETWEEN $3 AND $4
+        AND lat BETWEEN $5 AND $6
+        AND ${distanceSql} <= $7
+      ORDER BY ${distanceSql} ASC
+      LIMIT $8;
     `;
 
-    const { rows } = await pool.query(sql, [lon, lat, r, limit]);
+    const { rows } = await pool.query(sql, [
+      lat,
+      lon,
+      bounds.minLon,
+      bounds.maxLon,
+      bounds.minLat,
+      bounds.maxLat,
+      r,
+      limit,
+    ]);
     return { items: rows };
   });
 

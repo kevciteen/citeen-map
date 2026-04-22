@@ -15,6 +15,13 @@ function toCsvLine(values) {
   return values.map(csvEscape).join(";") + "\n";
 }
 
+function buildLonLatBbox(minLon, minLat, maxLon, maxLat, startIndex = 1) {
+  return {
+    clause: `lon BETWEEN $${startIndex} AND $${startIndex + 1} AND lat BETWEEN $${startIndex + 2} AND $${startIndex + 3}`,
+    params: [minLon, maxLon, minLat, maxLat],
+  };
+}
+
 // ----------------------
 // Concurrency helper (no lib)
 // ----------------------
@@ -138,7 +145,17 @@ export default fp(async function exportRoutes(fastify) {
   // ROUTE 1 : Export COPROS + DPE (réel/simulé/final)
   // =========================================================================
   fastify.get("/export/copros_dpe.csv", async (req, reply) => {
-    const { bbox, limit = 2000, syndic, q, departement } = req.query;
+    const {
+      bbox,
+      limit = 2000,
+      syndic,
+      q,
+      copro,
+      commune,
+      code_postal,
+      numero_immatriculation,
+      departement,
+    } = req.query;
     if (!bbox) return reply.code(400).send({ error: "bbox requis" });
 
     const [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
@@ -152,16 +169,34 @@ export default fp(async function exportRoutes(fastify) {
     const params = [];
     let i = 1;
 
-    where.push(`geom && ST_MakeEnvelope($${i++}, $${i++}, $${i++}, $${i++}, 4326)`);
-    params.push(minLon, minLat, maxLon, maxLat);
+    const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
+    where.push(bboxSql.clause);
+    params.push(...bboxSql.params);
+    i += 4;
 
     if (departement) {
       where.push(`departement = $${i++}`);
       params.push(String(departement));
     }
+    if (code_postal) {
+      where.push(`code_postal ILIKE $${i++}`);
+      params.push(`${String(code_postal).trim()}%`);
+    }
+    if (commune) {
+      where.push(`commune ILIKE $${i++}`);
+      params.push(`%${commune}%`);
+    }
     if (syndic) {
       where.push(`syndic ILIKE $${i++}`);
       params.push(`%${syndic}%`);
+    }
+    if (copro) {
+      where.push(`nom_copro ILIKE $${i++}`);
+      params.push(`%${copro}%`);
+    }
+    if (numero_immatriculation) {
+      where.push(`numero_immatriculation ILIKE $${i++}`);
+      params.push(`%${numero_immatriculation}%`);
     }
     if (q) {
       where.push(`(
@@ -169,6 +204,7 @@ export default fp(async function exportRoutes(fastify) {
         OR COALESCE(adresse,'') ILIKE $${i}
         OR COALESCE(commune,'') ILIKE $${i}
         OR COALESCE(code_postal,'') ILIKE $${i}
+        OR COALESCE(numero_immatriculation,'') ILIKE $${i}
       )`);
       params.push(`%${q}%`);
       i++;
@@ -295,7 +331,18 @@ export default fp(async function exportRoutes(fastify) {
   // =========================================================================
   // GET /export/dpes.csv?bbox=...&limit=200&maxDpePerCopro=200
   fastify.get("/export/dpes.csv", async (req, reply) => {
-    const { bbox, limit = 500, syndic, q, departement, maxDpePerCopro = 200 } = req.query;
+    const {
+      bbox,
+      limit = 500,
+      syndic,
+      q,
+      copro,
+      commune,
+      code_postal,
+      numero_immatriculation,
+      departement,
+      maxDpePerCopro = 200,
+    } = req.query;
     if (!bbox) return reply.code(400).send({ error: "bbox requis" });
 
     const [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
@@ -310,16 +357,34 @@ export default fp(async function exportRoutes(fastify) {
     const params = [];
     let i = 1;
 
-    where.push(`geom && ST_MakeEnvelope($${i++}, $${i++}, $${i++}, $${i++}, 4326)`);
-    params.push(minLon, minLat, maxLon, maxLat);
+    const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
+    where.push(bboxSql.clause);
+    params.push(...bboxSql.params);
+    i += 4;
 
     if (departement) {
       where.push(`departement = $${i++}`);
       params.push(String(departement));
     }
+    if (code_postal) {
+      where.push(`code_postal ILIKE $${i++}`);
+      params.push(`${String(code_postal).trim()}%`);
+    }
+    if (commune) {
+      where.push(`commune ILIKE $${i++}`);
+      params.push(`%${commune}%`);
+    }
     if (syndic) {
       where.push(`syndic ILIKE $${i++}`);
       params.push(`%${syndic}%`);
+    }
+    if (copro) {
+      where.push(`nom_copro ILIKE $${i++}`);
+      params.push(`%${copro}%`);
+    }
+    if (numero_immatriculation) {
+      where.push(`numero_immatriculation ILIKE $${i++}`);
+      params.push(`%${numero_immatriculation}%`);
     }
     if (q) {
       where.push(`(
@@ -327,6 +392,7 @@ export default fp(async function exportRoutes(fastify) {
         OR COALESCE(adresse,'') ILIKE $${i}
         OR COALESCE(commune,'') ILIKE $${i}
         OR COALESCE(code_postal,'') ILIKE $${i}
+        OR COALESCE(numero_immatriculation,'') ILIKE $${i}
       )`);
       params.push(`%${q}%`);
       i++;
