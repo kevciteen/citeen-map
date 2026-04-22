@@ -62,6 +62,16 @@ export function dpeClasseToColor(classe) {
   return map[c] || map.NC;
 }
 
+function isCollectifRecord(d) {
+  const typeDpe = String(d?.type_dpe || d?.type_dpe_batiment || "").toUpperCase();
+  return Boolean(
+    d?.numero_dpe_immeuble ||
+      d?.numero_dpe_immeuble_associe ||
+      typeDpe.includes("IMMEUBLE") ||
+      typeDpe.includes("COLLECTIF")
+  );
+}
+
 /* --------------------- dédoublonnage ADEME (robuste) ---------------------- */
 // On ne garde que le "dernier état" par numero_dpe / numero_dpe_immeuble
 function dedupeLatestByNumeroDpe(list) {
@@ -132,7 +142,7 @@ export async function fetchAdeMeDpeAround({
 /* --------------------- split collectif vs individuel ---------------------- */
 function splitCollectifIndividuel(dpeList) {
   const items = (Array.isArray(dpeList) ? dpeList : []).map((d) => {
-    const isCollectif = !!d?.numero_dpe_immeuble_associe;
+    const isCollectif = isCollectifRecord(d);
     return {
       raw: d,
       isCollectif,
@@ -187,7 +197,10 @@ export function computeReelEtSimule(dpeList, n = 5) {
         classe_color: dpeClasseToColor(collectifRecent.classe),
         ges: collectifRecent.ges,
         conso_kwh_m2_an: collectifRecent.conso,
-        numero_dpe: collectifRecent.raw?.numero_dpe || null,
+        numero_dpe:
+          collectifRecent.raw?.numero_dpe ||
+          collectifRecent.raw?.numero_dpe_immeuble ||
+          null,
       }
     : null;
 

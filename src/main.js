@@ -1,7 +1,9 @@
 import "./style.css";
 import maplibregl from "maplibre-gl";
 
-const API_BASE = "http://127.0.0.1:3002";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:3002";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+const MAX_DPE_SUMMARY_IDS = 120;
 
 document.querySelector("#app").innerHTML = `
   <div id="map" style="position:fixed; inset:0;"></div>
@@ -17,15 +19,32 @@ document.querySelector("#app").innerHTML = `
 
     <div class="panel__body">
       <label class="field">
-        <div class="field__label">Adresse</div>
-        <input id="q" class="input" placeholder="Rechercher une adresse, une copro, une commune…" autocomplete="off" />
-        <div class="field__hint">Suggestions Google disponibles</div>
+        <div class="field__label">Adresse / lieu</div>
+        <input id="q" class="input" placeholder="Adresse, rue, point d'intérêt…" autocomplete="off" />
+        <div id="qHint" class="field__hint">Autocomplete Google + repérage des copropriétés proches</div>
       </label>
 
       <div class="grid2">
         <label class="field">
+          <div class="field__label">Nom de copro</div>
+          <input id="copro" class="input" placeholder="Ex: Résidence Victor Hugo" />
+        </label>
+
+        <label class="field">
           <div class="field__label">Syndic</div>
           <input id="syndic" class="input" placeholder="Ex: Foncia, Nexity…" />
+        </label>
+      </div>
+
+      <div class="grid3">
+        <label class="field">
+          <div class="field__label">Commune</div>
+          <input id="commune" class="input" placeholder="Paris, Montreuil…" />
+        </label>
+
+        <label class="field">
+          <div class="field__label">Code postal</div>
+          <input id="cp" class="input" placeholder="75018" inputmode="numeric" />
         </label>
 
         <label class="field">
@@ -33,6 +52,11 @@ document.querySelector("#app").innerHTML = `
           <input id="dep" class="input" placeholder="75" inputmode="numeric" />
         </label>
       </div>
+
+      <label class="field">
+        <div class="field__label">Immatriculation copro</div>
+        <input id="immat" class="input" placeholder="AB1234567" autocomplete="off" />
+      </label>
 
       <div class="actions">
         <button id="refresh" class="btn btn--primary">Rechercher</button>
@@ -73,8 +97,12 @@ const FALLBACK_HALO_COLOR = "rgba(96,165,250,0.18)";
 
 // Cache DPE: on stocke la promesse pour dédupliquer (évite multi-fetch au clic/enrich)
 const dpePromiseCache = new Map(); // key -> Promise<json>
+const dpeSummaryCache = new Map(); // key -> summary
 let addressPopup = null;
 let coproPopup = null;
+let googleScriptPromise = null;
+let lastSearchFeatures = [];
+let activeColorHydrationToken = 0;
 
 let miniMap = null;
 let miniMapMarker = null;
@@ -118,6 +146,57 @@ async function mapLimit(items, limit, fn) {
   return Promise.all(ret);
 }
 
+function getSearchFilters() {
+  return {
+    q: document.getElementById("q").value.trim(),
+    copro: document.getElementById("copro").value.trim(),
+    syndic: document.getElementById("syndic").value.trim(),
+    commune: document.getElementById("commune").value.trim(),
+    code_postal: document.getElementById("cp").value.trim(),
+    departement: document.getElementById("dep").value.trim(),
+    numero_immatriculation: document.getElementById("immat").value.trim(),
+  };
+}
+
+function buildSearchParams({ limit }) {
+  const filters = getSearchFilters();
+  const params = new URLSearchParams({ bbox: bboxFromMap(), limit: String(limit) });
+
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+
+  return params;
+}
+
+function distanceScoreFromCenter(feature, center) {
+  const coords = feature?.geometry?.coordinates;
+  if (!Array.isArray(coords) || coords.length !== 2) return Number.POSITIVE_INFINITY;
+  const dx = Number(coords[0]) - Number(center.lng);
+  const dy = Number(coords[1]) - Number(center.lat);
+  return dx * dx + dy * dy;
+}
+
+function ensureGooglePlacesLoaded() {
+  if (window.google?.maps?.places) return Promise.resolve(window.google);
+  if (!GOOGLE_MAPS_API_KEY) return Promise.resolve(null);
+  if (googleScriptPromise) return googleScriptPromise;
+
+  googleScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
+      GOOGLE_MAPS_API_KEY
+    )}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve(window.google || null);
+    script.onerror = () => reject(new Error("google_places_load_failed"));
+    document.head.appendChild(script);
+  });
+
+  return googleScriptPromise;
+}
+
 // -------------------- Sidebar helpers --------------------
 function sidebarSet(html) {
   const sidebar = document.getElementById("sidebar");
@@ -152,6 +231,27 @@ function sidebarCard(title, innerHtml) {
 function wireSidebarClose() {
   const btn = document.getElementById("closeSide");
   if (btn) btn.onclick = sidebarClose;
+}
+
+function wireSidebarActionButtons() {
+  const buttons = document.querySelectorAll("[data-open-copro-id]");
+  for (const btn of buttons) {
+    btn.onclick = async () => {
+      const coproId = Number(btn.getAttribute("data-open-copro-id"));
+      const lon = Number(btn.getAttribute("data-lon"));
+      const lat = Number(btn.getAttribute("data-lat"));
+      const coords =
+        Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : undefined;
+
+      if (coords) {
+        map.easeTo({ center: coords, zoom: Math.max(map.getZoom(), 17) });
+      }
+
+      if (Number.isFinite(coproId)) {
+        await openCoproDetails(coproId, coords);
+      }
+    };
+  }
 }
 
 function sidebarLoading(label = "Chargement…") {
@@ -381,9 +481,29 @@ function renderDpeLadder({ activeClasse, metaRight }) {
   return `<div class="sbDpeLadder">${rows}</div>`;
 }
 
-function renderGoRenovSidebar({ title, subtitle, goRenov, extraTopCardHtml, dpeJson, coords, exportUrl }) {
+function renderGoRenovSidebar({
+  title,
+  subtitle,
+  goRenov,
+  extraTopCardHtml,
+  dpeJson,
+  coords,
+  exportUrl,
+  extraOverviewCardsHtml = "",
+  extraDetailCardsHtml = "",
+}) {
   // persist for toggle (IMPORTANT: garder exportUrl)
-  lastSidebarModel = { title, subtitle, goRenov, extraTopCardHtml, dpeJson, coords, exportUrl };
+  lastSidebarModel = {
+    title,
+    subtitle,
+    goRenov,
+    extraTopCardHtml,
+    dpeJson,
+    coords,
+    exportUrl,
+    extraOverviewCardsHtml,
+    extraDetailCardsHtml,
+  };
 
   const gr = goRenov || {};
   const grHeader = gr.header || {};
@@ -487,11 +607,13 @@ function renderGoRenovSidebar({ title, subtitle, goRenov, extraTopCardHtml, dpeJ
     <div class="sbHero">
       ${dpeCard}
     </div>
+    ${extraOverviewCardsHtml}
     ${recap}
   `;
 
   const detailBody = `
     ${recap}
+    ${extraDetailCardsHtml}
     ${detailCards}
     ${detailsEmpty}
   `;
@@ -530,9 +652,113 @@ function renderGoRenovSidebar({ title, subtitle, goRenov, extraTopCardHtml, dpeJ
 
   // Mini-map supprimée comme demandé
   destroyMiniMap();
+  wireSidebarActionButtons();
 }
 
 
+
+function buildDpeContextCards(dpeJson) {
+  const cards = [];
+  const reel = dpeJson?.dpeCollectifReel || null;
+  const sim = dpeJson?.dpeImmeubleSimule || null;
+  const stats = dpeJson?.stats || {};
+  const meta = dpeJson?.meta || {};
+
+  if (reel) {
+    cards.push(
+      cardPremium(
+        "Dernier DPE collectif",
+        renderRowsFromObject({
+          statut: reel.statut,
+          classe: reel.classe,
+          conso_kwh_m2_an: reel.conso_kwh_m2_an,
+          ges: reel.ges,
+          date: reel.date,
+          numero_dpe: reel.numero_dpe,
+        })
+      )
+    );
+  }
+
+  if (sim) {
+    cards.push(
+      cardPremium(
+        reel ? "Simulation immeuble disponible" : "Simulation immeuble",
+        renderRowsFromObject({
+          statut: sim.statut,
+          classe: sim.classe,
+          conso_kwh_m2_an: sim.conso_kwh_m2_an,
+          methode: sim.methode,
+        })
+      )
+    );
+  }
+
+  cards.push(
+    cardPremium(
+      "Base de calcul",
+      renderRowsFromObject({
+        dpe_total: stats.dpe_total,
+        rayon_m: stats.rayon_m,
+        final_source: meta.final_source,
+        indiv_used_for_simulation: meta.indiv_used_for_simulation,
+        indiv_eligibles: meta.indiv_eligibles,
+      })
+    )
+  );
+
+  return cards.join("");
+}
+
+function renderNearbyCoprosCard(candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return cardPremium(
+      "Copros proches de l'adresse",
+      `<div class="sbMuted">Aucune copropriÃ©tÃ© du registre n'a Ã©tÃ© trouvÃ©e Ã  proximitÃ© immÃ©diate de cette adresse.</div>`
+    );
+  }
+
+  const best = candidates[0];
+  const hint = Number.isFinite(best?.distance_m)
+    ? `Meilleure correspondance actuelle Ã  ${best.distance_m} m.`
+    : "Plusieurs copropriÃ©tÃ©s sont proches de l'adresse.";
+
+  const items = candidates
+    .map((copro) => {
+      const title =
+        copro.nom_copro ||
+        [copro.adresse, copro.code_postal, copro.commune].filter(Boolean).join(" ") ||
+        `Copro #${copro.id}`;
+      const meta = [
+        Number.isFinite(copro.distance_m) ? `${copro.distance_m} m` : null,
+        copro.syndic ? `Syndic: ${copro.syndic}` : null,
+        copro.numero_immatriculation ? `Immat.: ${copro.numero_immatriculation}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      return `
+        <button
+          class="sbCandidate"
+          data-open-copro-id="${Number(copro.id)}"
+          data-lon="${Number(copro.lon)}"
+          data-lat="${Number(copro.lat)}"
+        >
+          <span class="sbCandidate__title">${escapeHtml(title)}</span>
+          <span class="sbCandidate__meta">${escapeHtml(meta || "Ouvrir la fiche")}</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  return cardPremium(
+    "Copros proches de l'adresse",
+    `
+      <div class="sbMuted" style="margin-bottom:10px;">${escapeHtml(hint)}</div>
+      <div class="sbCandidateList">${items}</div>
+    `
+  );
+}
 
 // -------------------- API helpers (DPE) --------------------
 async function fetchJsonCached(key, url) {
@@ -557,6 +783,73 @@ async function fetchDpeForCoproIdFull(id) {
 
 async function fetchDpeForLatLonFull({ lat, lon, r = 30 }) {
   return fetchJsonCached(`addr:${lat.toFixed(6)},${lon.toFixed(6)},${r}`, `${API_BASE}/dpe/around?lat=${lat}&lon=${lon}&r=${r}`);
+}
+
+async function fetchNearbyCopros({ lat, lon, r = 120, limit = 8 }) {
+  const res = await fetch(`${API_BASE}/copros/nearby?lat=${lat}&lon=${lon}&r=${r}&limit=${limit}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return Array.isArray(json?.items) ? json.items : [];
+}
+
+async function fetchCoproDpeSummaries(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const res = await fetch(`${API_BASE}/copros/dpe-summaries?ids=${ids.join(",")}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return Array.isArray(json?.items) ? json.items : [];
+}
+
+function applyDpeSummaryToMap(summary) {
+  if (!summary?.id) return;
+  map.setFeatureState(
+    { source: COPROS_SOURCE_ID, id: Number(summary.id) },
+    {
+      dpe_color: summary.classe_color || FALLBACK_POINT_COLOR,
+      dpe_halo: summary.classe_color || FALLBACK_HALO_COLOR,
+    }
+  );
+}
+
+async function hydrateCoproColors(features = lastSearchFeatures) {
+  if (!Array.isArray(features) || features.length === 0 || !map.getSource(COPROS_SOURCE_ID)) {
+    return;
+  }
+
+  const center = map.getCenter();
+  const ids = [];
+  const seen = new Set();
+  const sorted = features
+    .slice()
+    .sort((a, b) => distanceScoreFromCenter(a, center) - distanceScoreFromCenter(b, center));
+
+  for (const feature of sorted) {
+    const id = Number(feature?.properties?.id);
+    if (!Number.isFinite(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+
+  for (const id of ids) {
+    const cached = dpeSummaryCache.get(id);
+    if (cached) applyDpeSummaryToMap(cached);
+  }
+
+  const missingIds = ids.filter((id) => !dpeSummaryCache.has(id)).slice(0, MAX_DPE_SUMMARY_IDS);
+  if (missingIds.length === 0) return;
+
+  const token = ++activeColorHydrationToken;
+  try {
+    const items = await fetchCoproDpeSummaries(missingIds);
+    if (token !== activeColorHydrationToken) return;
+
+    for (const item of items) {
+      dpeSummaryCache.set(Number(item.id), item);
+      applyDpeSummaryToMap(item);
+    }
+  } catch (err) {
+    console.warn("Coloration DPE impossible", err);
+  }
 }
 
 // -------------------- Map layers --------------------
@@ -772,6 +1065,11 @@ async function openCoproDetails(coproId, coords) {
   const fin = dpeJson?.dpeImmeubleFinal || null;
   const classe = String(fin?.classe || "NC").toUpperCase();
   const color = fin?.classe_color || FALLBACK_POINT_COLOR;
+  dpeSummaryCache.set(Number(coproId), {
+    id: Number(coproId),
+    classe,
+    classe_color: color,
+  });
 
   // NOTE: promoteId: "id" => id numérique ok
   map.setFeatureState(
@@ -807,17 +1105,20 @@ async function openCoproDetails(coproId, coords) {
     `
     : `<div class="sb__muted">Copro #${escapeHtml(String(coproId))}</div>`;
 
-    const exportUrl = `${API_BASE}/copros/${Number(coproId)}/dpe/export_all.csv`;
+  const exportUrl = `${API_BASE}/copros/${Number(coproId)}/dpe/export_all.csv`;
+  const dpeContextCards = buildDpeContextCards(dpeJson);
 
   renderGoRenovSidebar({
-  title: "Fiche immeuble",
-  subtitle: copro ? [copro?.adresse, copro?.code_postal, copro?.commune].filter(Boolean).join(" ") : "",
-  goRenov: dpeJson?.goRenov || null,
-  extraTopCardHtml: extraTop,
-  dpeJson,
-  coords: safeLngLat,
-  exportUrl, // <-- AJOUT
-});
+    title: "Fiche immeuble",
+    subtitle: copro ? [copro?.adresse, copro?.code_postal, copro?.commune].filter(Boolean).join(" ") : "",
+    goRenov: dpeJson?.goRenov || null,
+    extraTopCardHtml: extraTop,
+    dpeJson,
+    coords: safeLngLat,
+    exportUrl,
+    extraOverviewCardsHtml: dpeContextCards,
+    extraDetailCardsHtml: dpeContextCards,
+  });
 
 
   // Bouton maps optionnel
@@ -911,6 +1212,105 @@ const popup = openPremiumPopup({
   return dpeJson;
 }
 
+async function setAddressMarkerEnhanced({ lat, lon, label }) {
+  const geo = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [lon, lat] },
+        properties: {
+          dpe_color: FALLBACK_POINT_COLOR,
+          label: label || "Adresse",
+        },
+      },
+    ],
+  };
+
+  map.getSource(ADDRESS_SOURCE_ID)?.setData(geo);
+  bringAddressToFront();
+
+  sidebarLoading("Chargement DPE (adresse)…");
+
+  const popup = openPremiumPopup({
+    lngLat: [lon, lat],
+    kind: "address",
+    payload: { title: label || "Adresse", loading: true },
+  });
+
+  let dpeJson = null;
+  try {
+    dpeJson = await fetchDpeForLatLonFull({ lat, lon, r: 30 });
+  } catch (e) {
+    updatePremiumPopup(popup, {
+      title: label || "Adresse",
+      loading: false,
+      classe: "—",
+      color: FALLBACK_POINT_COLOR,
+      statut: "—",
+      conso: "—",
+      ges: "—",
+      confScore: "—",
+      confLabel: "",
+      source: "Erreur DPE",
+    });
+    sidebarSet(
+      `${sidebarHeader("Adresse")}${sidebarCard(
+        "Erreur",
+        `<div class="sb__muted">Impossible de charger le DPE (adresse).</div>`
+      )}`
+    );
+    wireSidebarClose();
+    return null;
+  }
+
+  const fin = dpeJson?.dpeImmeubleFinal || null;
+  const classe = String(fin?.classe || "NC").toUpperCase();
+  const color = fin?.classe_color || FALLBACK_POINT_COLOR;
+
+  geo.features[0].properties.dpe_color = color;
+  map.getSource(ADDRESS_SOURCE_ID)?.setData(geo);
+  bringAddressToFront();
+
+  updatePremiumPopup(popup, {
+    title: label || "Adresse",
+    loading: false,
+    classe,
+    color,
+    statut: fin?.statut || "—",
+    conso: fin?.conso_kwh_m2_an ?? "—",
+    ges: fin?.ges || "NC",
+    date: fin?.date || "",
+    confScore: fin?.confiance?.score ?? "—",
+    confLabel: fin?.confiance?.label ?? "",
+    source: "Source: ADEME (autour du point)",
+  });
+
+  let nearbyCopros = [];
+  try {
+    nearbyCopros = await fetchNearbyCopros({ lat, lon, r: 120, limit: 8 });
+  } catch (err) {
+    console.warn("Recherche de copro proche impossible", err);
+  }
+
+  const addressContextCards =
+    renderNearbyCoprosCard(nearbyCopros) +
+    buildDpeContextCards(dpeJson);
+
+  renderGoRenovSidebar({
+    title: "Adresse",
+    subtitle: label || "",
+    goRenov: dpeJson?.goRenov || null,
+    extraTopCardHtml: `<div style="font-weight:950; font-size:15px;">${escapeHtml(label || "—")}</div>`,
+    dpeJson,
+    coords: [lon, lat],
+    extraOverviewCardsHtml: addressContextCards,
+    extraDetailCardsHtml: addressContextCards,
+  });
+
+  return dpeJson;
+}
+
 // -------------------- Fetch copros (action utilisateur) --------------------
 async function fetchCopros() {
   if (!map.loaded()) {
@@ -953,6 +1353,51 @@ async function fetchCopros() {
   bringAddressToFront();
 
   if (features.length === 0) sidebarClose();
+}
+
+async function runCoproSearch() {
+  if (!map.loaded()) {
+    setStatus("Carte en chargement…");
+    return;
+  }
+
+  const filters = getSearchFilters();
+  const hasFilters = Object.values(filters).some(Boolean);
+  if (!hasFilters) {
+    setStatus("Renseigne au moins un critère de recherche.");
+    return;
+  }
+
+  const url = `${API_BASE}/copros?${buildSearchParams({ limit: 12000 }).toString()}`;
+  const t0 = performance.now();
+
+  setStatus("Recherche…");
+  const res = await fetch(url);
+  if (!res.ok) {
+    setStatus(`Erreur HTTP ${res.status}`);
+    return;
+  }
+
+  const geojson = await res.json();
+  const ms = Math.round(performance.now() - t0);
+  const features = Array.isArray(geojson?.features) ? geojson.features : [];
+  lastSearchFeatures = features;
+
+  setStatus(`${features.length.toLocaleString()} points · ${ms} ms`);
+  map.getSource(COPROS_SOURCE_ID)?.setData(geojson);
+  bringAddressToFront();
+
+  if (features.length === 0) {
+    sidebarClose();
+    return;
+  }
+
+  await hydrateCoproColors(features);
+}
+
+function exportCurrentSearchCsv() {
+  if (!map.loaded()) return;
+  window.open(`${API_BASE}/export/copros_dpe.csv?${buildSearchParams({ limit: 5000 }).toString()}`, "_blank");
 }
 
 // -------------------- Export CSV --------------------
@@ -1010,14 +1455,69 @@ function initGoogleAutocomplete() {
   });
 }
 
+async function initGoogleAutocompleteEnhanced() {
+  const hint = document.getElementById("qHint");
+
+  let googleApi = null;
+  try {
+    googleApi = await ensureGooglePlacesLoaded();
+  } catch (err) {
+    console.warn("Google Places non chargÃ©", err);
+  }
+
+  if (!googleApi?.maps?.places) {
+    if (hint) {
+      hint.textContent = GOOGLE_MAPS_API_KEY
+        ? "Autocomplete Google indisponible pour le moment"
+        : "Renseigne VITE_GOOGLE_MAPS_API_KEY pour activer l'autocomplete Google";
+    }
+    return;
+  }
+
+  if (hint) {
+    hint.textContent = "Autocomplete Google active + repÃ©rage des copropriÃ©tÃ©s proches";
+  }
+
+  const input = document.getElementById("q");
+  const ac = new googleApi.maps.places.Autocomplete(input, {
+    types: ["geocode"],
+    componentRestrictions: { country: "fr" },
+    fields: ["geometry", "formatted_address"],
+  });
+
+  ac.addListener("place_changed", async () => {
+    const place = ac.getPlace();
+    const loc = place?.geometry?.location;
+    if (!loc) return;
+
+    const lat = loc.lat();
+    const lon = loc.lng();
+
+    if (place.formatted_address) input.value = place.formatted_address;
+
+    map.easeTo({ center: [lon, lat], zoom: 16 });
+
+    await setAddressMarkerEnhanced({
+      lat,
+      lon,
+      label: place.formatted_address || input.value || "Adresse",
+    });
+  });
+}
+
 // -------------------- UI events --------------------
-document.getElementById("refresh").addEventListener("click", fetchCopros);
+document.getElementById("refresh").addEventListener("click", runCoproSearch);
 
 document.getElementById("clear").addEventListener("click", () => {
   document.getElementById("q").value = "";
+  document.getElementById("copro").value = "";
   document.getElementById("syndic").value = "";
+  document.getElementById("commune").value = "";
+  document.getElementById("cp").value = "";
   document.getElementById("dep").value = "";
+  document.getElementById("immat").value = "";
   sidebarClose();
+  lastSearchFeatures = [];
 
   map.getSource(COPROS_SOURCE_ID)?.setData({ type: "FeatureCollection", features: [] });
   map.getSource(ADDRESS_SOURCE_ID)?.setData({ type: "FeatureCollection", features: [] });
@@ -1030,12 +1530,12 @@ document.getElementById("clear").addEventListener("click", () => {
   setStatus("Fais une recherche pour afficher les résultats.");
 });
 
-document.getElementById("export").addEventListener("click", exportCsv);
+document.getElementById("export").addEventListener("click", exportCurrentSearchCsv);
 
-for (const id of ["q", "syndic", "dep"]) {
+for (const id of ["q", "copro", "syndic", "commune", "cp", "dep", "immat"]) {
   const el = document.getElementById(id);
   el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") fetchCopros();
+    if (e.key === "Enter") runCoproSearch();
   });
 }
 
@@ -1043,5 +1543,5 @@ for (const id of ["q", "syndic", "dep"]) {
 map.on("load", () => {
   ensureSourcesAndBaseLayers();
   setStatus("Fais une recherche pour afficher les résultats.");
-  initGoogleAutocomplete();
+  initGoogleAutocompleteEnhanced();
 });

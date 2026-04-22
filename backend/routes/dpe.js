@@ -80,6 +80,30 @@ function computeClasseCounts(list) {
   return counts;
 }
 
+async function mapLimit(items, limit, fn) {
+  const ret = [];
+  const executing = [];
+
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    ret.push(p);
+    executing.push(p);
+
+    const clean = () => {
+      const idx = executing.indexOf(p);
+      if (idx >= 0) executing.splice(idx, 1);
+    };
+
+    p.then(clean).catch(clean);
+
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+    }
+  }
+
+  return Promise.all(ret);
+}
+
 /* --------------------------- GoRenov-like builder -------------------------- */
 function buildGoRenov({
   copro,
@@ -470,6 +494,73 @@ const stats = { dpe_total: list.length, rayon_m: r, ...(meta || {}) };
   });
 
   // Export tous les DPE (bruts ADEME) trouvés autour de la copro (collectif + individuel)
+  fastify.get("/copros/dpe-summaries", async (req, reply) => {
+    const ids = [
+      ...new Set(
+        String(req.query.ids || "")
+          .split(",")
+          .map((v) => Number(v.trim()))
+          .filter(Number.isFinite)
+      ),
+    ].slice(0, 120);
+
+    if (ids.length === 0) {
+      return reply.code(400).send({ error: "ids requis" });
+    }
+
+    const { rows } = await fastify.db.query(
+      `
+        SELECT id, lat, lon, nom_copro, adresse, code_postal, commune
+        FROM copros
+        WHERE id = ANY($1::int[])
+      `,
+      [ids]
+    );
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const items = await mapLimit(ids, 4, async (id) => {
+      const copro = byId.get(id);
+      if (!copro) return null;
+
+      let dpe = makeFallbackDpe();
+      try {
+        dpe = await getDpeForLatLon({
+          lat: Number(copro.lat),
+          lon: Number(copro.lon),
+          minResults: 8,
+          n: 5,
+        });
+      } catch {
+        dpe = makeFallbackDpe();
+      }
+
+      const final = dpe.dpeImmeubleFinal || makeFallbackDpe().dpeImmeubleFinal;
+      return {
+        id: copro.id,
+        nom_copro: copro.nom_copro,
+        adresse: [copro.adresse, copro.code_postal, copro.commune].filter(Boolean).join(" "),
+        statut: final?.statut || "aucun",
+        classe: final?.classe || "NC",
+        classe_color: final?.classe_color || dpeClasseToColor("NC"),
+        conso_kwh_m2_an: final?.conso_kwh_m2_an ?? null,
+        ges: final?.ges || "NC",
+        confiance_score: final?.confiance?.score ?? null,
+        confiance_label: final?.confiance?.label ?? null,
+        has_collectif_reel: Boolean(dpe.dpeCollectifReel),
+        has_simulation: Boolean(dpe.dpeImmeubleSimule),
+        collectif_date: dpe.dpeCollectifReel?.date || null,
+        numero_dpe:
+          final?.numero_dpe ||
+          dpe.dpeCollectifReel?.numero_dpe ||
+          null,
+        rayon_m: dpe.usedR ?? null,
+        dpe_total: dpe.list?.length ?? 0,
+      };
+    });
+
+    return { items: items.filter(Boolean) };
+  });
+
 fastify.get("/copros/:id/dpe/export_all.csv", async (req, reply) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return reply.code(400).send("id invalide");
