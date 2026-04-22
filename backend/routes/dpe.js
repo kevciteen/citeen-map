@@ -463,21 +463,34 @@ export default fp(async function dpeRoutes(fastify) {
     const lat = Number(req.query.lat);
     const lon = Number(req.query.lon);
     const r = req.query.r ? Number(req.query.r) : 50;
+    const addressLabel = String(req.query.address_label || "").trim();
 
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
       return fastify.httpErrors.badRequest("lat/lon invalides");
     }
 
-    const list = await fetchAdeMeDpeAround({ lat, lon, r });
-    const { dpeCollectifReel, dpeImmeubleSimule, dpeImmeubleFinal, meta } =
-  computeReelEtSimule(list, 5);
+    const dpe = await getDpeForLatLon({
+      lat,
+      lon,
+      minResults: 8,
+      n: 5,
+      addressContext: addressLabel
+        ? {
+            lat,
+            lon,
+            label: addressLabel,
+          }
+        : { lat, lon },
+    });
 
-const stats = { dpe_total: list.length, rayon_m: r, ...(meta || {}) };
+    const list = Array.isArray(dpe.list) ? dpe.list : [];
+    const { dpeCollectifReel, dpeImmeubleSimule, dpeImmeubleFinal } = dpe;
+    const stats = { ...(dpe.stats || {}), ...(dpe.meta || {}), rayon_m: dpe.usedR ?? r, dpe_total: list.length };
 
 
     return {
       stats,
-      usedR: r,
+      usedR: dpe.usedR ?? r,
       list,
       dpeCollectifReel,
       dpeImmeubleSimule,
@@ -529,6 +542,7 @@ const stats = { dpe_total: list.length, rayon_m: r, ...(meta || {}) };
           lon: Number(copro.lon),
           minResults: 8,
           n: 5,
+          addressContext: copro,
         });
       } catch {
         dpe = makeFallbackDpe();
@@ -704,14 +718,27 @@ fastify.get("/copros/:id/dpe/export_all.csv", async (req, reply) => {
 
       const copro = rows[0];
       if (!copro) return fastify.httpErrors.notFound("copro introuvable");
+      const preferredLat = Number(req.query.lat);
+      const preferredLon = Number(req.query.lon);
+      const preferredLabel = String(req.query.address_label || "").trim();
 
       let dpe = makeFallbackDpe();
       try {
         dpe = await getDpeForLatLon({
-          lat: copro.lat,
-          lon: copro.lon,
+          lat: Number.isFinite(preferredLat) ? preferredLat : copro.lat,
+          lon: Number.isFinite(preferredLon) ? preferredLon : copro.lon,
           minResults: 8,
           n: 5,
+          allowGeocode: !Number.isFinite(preferredLat) || !Number.isFinite(preferredLon),
+          addressContext:
+            Number.isFinite(preferredLat) && Number.isFinite(preferredLon)
+              ? {
+                  ...copro,
+                  lat: preferredLat,
+                  lon: preferredLon,
+                  label: preferredLabel || [copro.adresse, copro.code_postal, copro.commune].filter(Boolean).join(" "),
+                }
+              : copro,
         });
       } catch (err) {
         req.log.error({ err, coproId: id }, "getDpeForLatLon failed");

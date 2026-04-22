@@ -105,7 +105,7 @@ let addressPopup = null;
 let coproPopup = null;
 let googleScriptPromise = null;
 let lastSearchFeatures = [];
-let lastSearchRequestOptions = { bboxOverride: null, omitKeys: [] };
+let lastSearchRequestOptions = { bboxOverride: null, omitKeys: [], includeBbox: true };
 let activeColorHydrationToken = 0;
 
 let miniMap = null;
@@ -162,13 +162,14 @@ function getSearchFilters() {
   };
 }
 
-function buildSearchParams({ limit, bboxOverride = null, omitKeys = [] }) {
+function buildSearchParams({ limit, bboxOverride = null, omitKeys = [], includeBbox = true }) {
   const filters = getSearchFilters();
   const omitted = new Set(omitKeys);
-  const params = new URLSearchParams({
-    bbox: bboxOverride || bboxFromMap(),
-    limit: String(limit),
-  });
+  const params = new URLSearchParams({ limit: String(limit) });
+
+  if (includeBbox) {
+    params.set("bbox", bboxOverride || bboxFromMap());
+  }
 
   for (const [key, value] of Object.entries(filters)) {
     if (value && !omitted.has(key)) params.set(key, value);
@@ -208,6 +209,38 @@ function bboxAroundPoint(lon, lat, radiusMeters = 220) {
     Number(lon) + lonDelta,
     Number(lat) + latDelta,
   ].join(",");
+}
+
+function fitMapToFeatures(features, maxZoom = 17) {
+  if (!Array.isArray(features) || features.length === 0) return;
+
+  const bounds = new maplibregl.LngLatBounds();
+  let count = 0;
+
+  for (const feature of features) {
+    const coords = feature?.geometry?.coordinates;
+    if (!Array.isArray(coords) || coords.length !== 2) continue;
+
+    const lon = Number(coords[0]);
+    const lat = Number(coords[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+
+    bounds.extend([lon, lat]);
+    count += 1;
+  }
+
+  if (!count || bounds.isEmpty()) return;
+
+  if (count === 1) {
+    map.easeTo({ center: bounds.getCenter(), zoom: maxZoom });
+    return;
+  }
+
+  map.fitBounds(bounds, {
+    padding: { top: 96, right: 560, bottom: 96, left: 96 },
+    maxZoom,
+    duration: 800,
+  });
 }
 
 async function fetchFrenchAddressCandidates(query, limit = 5) {
@@ -330,13 +363,24 @@ function wireSidebarActionButtons() {
       const lat = Number(btn.getAttribute("data-lat"));
       const coords =
         Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : undefined;
+      const originLon = Number(btn.getAttribute("data-origin-lon"));
+      const originLat = Number(btn.getAttribute("data-origin-lat"));
+      const originLabelRaw = btn.getAttribute("data-origin-label") || "";
+      const preferredContext =
+        Number.isFinite(originLon) && Number.isFinite(originLat)
+          ? {
+              lon: originLon,
+              lat: originLat,
+              label: originLabelRaw ? decodeURIComponent(originLabelRaw) : "",
+            }
+          : null;
 
       if (coords) {
         map.easeTo({ center: coords, zoom: Math.max(map.getZoom(), 17) });
       }
 
       if (Number.isFinite(coproId)) {
-        await openCoproDetails(coproId, coords);
+        await openCoproDetails(coproId, coords, { preferredContext });
       }
     };
   }
@@ -798,7 +842,7 @@ function buildDpeContextCards(dpeJson) {
   return cards.join("");
 }
 
-function renderNearbyCoprosCard(candidates) {
+function renderNearbyCoprosCard(candidates, originContext = null) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
     return cardPremium(
       "Copros proches de l'adresse",
@@ -825,12 +869,24 @@ function renderNearbyCoprosCard(candidates) {
         .filter(Boolean)
         .join(" · ");
 
+      const originAttrs =
+        originContext &&
+        Number.isFinite(Number(originContext.lon)) &&
+        Number.isFinite(Number(originContext.lat))
+          ? `
+          data-origin-lon="${Number(originContext.lon)}"
+          data-origin-lat="${Number(originContext.lat)}"
+          data-origin-label="${encodeURIComponent(String(originContext.label || ""))}"
+        `
+          : "";
+
       return `
         <button
           class="sbCandidate"
           data-open-copro-id="${Number(copro.id)}"
           data-lon="${Number(copro.lon)}"
           data-lat="${Number(copro.lat)}"
+          ${originAttrs}
         >
           <span class="sbCandidate__title">${escapeHtml(title)}</span>
           <span class="sbCandidate__meta">${escapeHtml(meta || "Ouvrir la fiche")}</span>
@@ -865,12 +921,40 @@ async function fetchJsonCached(key, url) {
   }
 }
 
-async function fetchDpeForCoproIdFull(id) {
-  return fetchJsonCached(`copro:${id}`, `${API_BASE}/copros/${id}/dpe`);
+async function fetchDpeForCoproIdFull(id, preferredContext = null) {
+  const params = new URLSearchParams();
+
+  if (Number.isFinite(Number(preferredContext?.lat))) {
+    params.set("lat", String(Number(preferredContext.lat)));
+  }
+
+  if (Number.isFinite(Number(preferredContext?.lon))) {
+    params.set("lon", String(Number(preferredContext.lon)));
+  }
+
+  if (preferredContext?.label) {
+    params.set("address_label", String(preferredContext.label));
+  }
+
+  const suffix = params.toString();
+  return fetchJsonCached(
+    `copro:${id}:${suffix}`,
+    `${API_BASE}/copros/${id}/dpe${suffix ? `?${suffix}` : ""}`
+  );
 }
 
-async function fetchDpeForLatLonFull({ lat, lon, r = 30 }) {
-  return fetchJsonCached(`addr:${lat.toFixed(6)},${lon.toFixed(6)},${r}`, `${API_BASE}/dpe/around?lat=${lat}&lon=${lon}&r=${r}`);
+async function fetchDpeForLatLonFull({ lat, lon, r = 30, label = "" }) {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    r: String(r),
+  });
+  if (label) params.set("address_label", label);
+
+  return fetchJsonCached(
+    `addr:${lat.toFixed(6)},${lon.toFixed(6)},${r}:${label}`,
+    `${API_BASE}/dpe/around?${params.toString()}`
+  );
 }
 
 async function fetchNearbyCopros({ lat, lon, r = 120, limit = 8 }) {
@@ -1096,15 +1180,19 @@ function bringAddressToFront() {
 // -------------------- Open details (copro) --------------------
 let activeCoproRequestToken = 0;
 
-async function openCoproDetails(coproId, coords) {
+async function openCoproDetails(coproId, coords, options = {}) {
   const token = ++activeCoproRequestToken;
+  const preferredContext = options?.preferredContext || null;
 
   // coordonnées sûres (évite crash si coords undefined)
   const safeLngLat =
-    Array.isArray(coords) &&
-    coords.length === 2 &&
-    Number.isFinite(Number(coords[0])) &&
-    Number.isFinite(Number(coords[1]))
+    Number.isFinite(Number(preferredContext?.lon)) &&
+    Number.isFinite(Number(preferredContext?.lat))
+      ? [Number(preferredContext.lon), Number(preferredContext.lat)]
+      : Array.isArray(coords) &&
+        coords.length === 2 &&
+        Number.isFinite(Number(coords[0])) &&
+        Number.isFinite(Number(coords[1]))
       ? [Number(coords[0]), Number(coords[1])]
       : map.getCenter().toArray();
 
@@ -1119,7 +1207,7 @@ async function openCoproDetails(coproId, coords) {
 
   let dpeJson;
   try {
-    dpeJson = await fetchDpeForCoproIdFull(coproId);
+    dpeJson = await fetchDpeForCoproIdFull(coproId, preferredContext);
     if (token !== activeCoproRequestToken) return;
   } catch (e) {
     if (token !== activeCoproRequestToken) return;
@@ -1256,7 +1344,7 @@ const popup = openPremiumPopup({
 
   let dpeJson = null;
   try {
-    dpeJson = await fetchDpeForLatLonFull({ lat, lon, r: 30 });
+    dpeJson = await fetchDpeForLatLonFull({ lat, lon, r: 30, label });
   } catch (e) {
     updatePremiumPopup(popup, { title: label || "Adresse", loading: false, classe: "—", color: FALLBACK_POINT_COLOR, statut: "—", conso: "—", ges: "—", confScore: "—", confLabel: "", source: "Erreur DPE" });
     sidebarSet(`${sidebarHeader("Adresse")}${sidebarCard("Erreur", `<div class="sb__muted">Impossible de charger le DPE (adresse).</div>`)}`);
@@ -1328,7 +1416,7 @@ async function setAddressMarkerEnhanced({ lat, lon, label }) {
 
   let dpeJson = null;
   try {
-    dpeJson = await fetchDpeForLatLonFull({ lat, lon, r: 30 });
+    dpeJson = await fetchDpeForLatLonFull({ lat, lon, r: 30, label });
   } catch (e) {
     updatePremiumPopup(popup, {
       title: label || "Adresse",
@@ -1382,7 +1470,7 @@ async function setAddressMarkerEnhanced({ lat, lon, label }) {
   }
 
   const addressContextCards =
-    renderNearbyCoprosCard(nearbyCopros) +
+    renderNearbyCoprosCard(nearbyCopros, { lat, lon, label }) +
     buildDpeContextCards(dpeJson);
 
   renderGoRenovSidebar({
@@ -1440,6 +1528,10 @@ async function fetchCopros() {
   map.getSource(COPROS_SOURCE_ID)?.setData(geojson);
   bringAddressToFront();
 
+  if (!addressCandidate) {
+    fitMapToFeatures(features);
+  }
+
   if (features.length === 0) sidebarClose();
 }
 
@@ -1458,6 +1550,7 @@ async function runCoproSearch() {
 
   let bboxOverride = null;
   let omitKeys = [];
+  let includeBbox = true;
   let addressCandidate = null;
 
   if (looksLikeAddressQuery(filters.q)) {
@@ -1475,14 +1568,17 @@ async function runCoproSearch() {
         label: addressCandidate.label,
       });
     }
+  } else {
+    includeBbox = false;
   }
 
-  lastSearchRequestOptions = { bboxOverride, omitKeys };
+  lastSearchRequestOptions = { bboxOverride, omitKeys, includeBbox };
 
   const url = `${API_BASE}/copros?${buildSearchParams({
-    limit: 12000,
+    limit: includeBbox ? 12000 : 2000,
     bboxOverride,
     omitKeys,
+    includeBbox,
   }).toString()}`;
   const t0 = performance.now();
 
@@ -1535,6 +1631,7 @@ function exportCurrentSearchCsv() {
       limit: 5000,
       bboxOverride: lastSearchRequestOptions.bboxOverride,
       omitKeys: lastSearchRequestOptions.omitKeys,
+      includeBbox: lastSearchRequestOptions.includeBbox,
     }).toString()}`,
     "_blank"
   );
@@ -1658,7 +1755,7 @@ document.getElementById("clear").addEventListener("click", () => {
   document.getElementById("immat").value = "";
   sidebarClose();
   lastSearchFeatures = [];
-  lastSearchRequestOptions = { bboxOverride: null, omitKeys: [] };
+  lastSearchRequestOptions = { bboxOverride: null, omitKeys: [], includeBbox: true };
 
   map.getSource(COPROS_SOURCE_ID)?.setData({ type: "FeatureCollection", features: [] });
   map.getSource(ADDRESS_SOURCE_ID)?.setData({ type: "FeatureCollection", features: [] });

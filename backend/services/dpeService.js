@@ -1,6 +1,7 @@
 // backend/services/dpeService.js
 const DPE_API_BASE =
   "https://data.ademe.fr/data-fair/api/v1/datasets/dpe03existant/lines";
+const BAN_API_BASE = "https://api-adresse.data.gouv.fr/search/";
 
 /* ------------------------------ cache simple ------------------------------ */
 const cache = new Map();
@@ -23,6 +24,189 @@ function cacheSet(key, data, ttlMs = CACHE_TTL_MS) {
 function parseDate(d) {
   const t = Date.parse(d);
   return Number.isFinite(t) ? t : 0;
+}
+
+function normalizeAscii(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeCompact(value) {
+  return normalizeAscii(value).replace(/\s+/g, "");
+}
+
+function extractHouseNumber(value) {
+  const match = normalizeAscii(value).match(/\b(\d{1,4})(?:\s*(bis|ter|quater))?\b/);
+  if (!match) return null;
+  return `${match[1]}${match[2] || ""}`;
+}
+
+function streetTokenSet(value) {
+  const stopWords = new Set([
+    "rue",
+    "avenue",
+    "av",
+    "boulevard",
+    "bd",
+    "place",
+    "route",
+    "quai",
+    "cours",
+    "allee",
+    "impasse",
+    "chemin",
+    "residence",
+    "batiment",
+  ]);
+
+  return new Set(
+    normalizeAscii(value)
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((token) => !stopWords.has(token))
+  );
+}
+
+function scoreTokenOverlap(left, right) {
+  if (!(left instanceof Set) || !(right instanceof Set) || left.size === 0 || right.size === 0) {
+    return 0;
+  }
+
+  let common = 0;
+  for (const token of left) {
+    if (right.has(token)) common += 1;
+  }
+
+  return common / Math.max(left.size, right.size);
+}
+
+function parseGeoPoint(point) {
+  if (!point) return null;
+
+  if (Array.isArray(point) && point.length >= 2) {
+    const lat = Number(point[0]);
+    const lon = Number(point[1]);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+  }
+
+  if (typeof point === "string") {
+    const [latRaw, lonRaw] = point.split(",").map(Number);
+    return Number.isFinite(latRaw) && Number.isFinite(lonRaw)
+      ? { lat: latRaw, lon: lonRaw }
+      : null;
+  }
+
+  if (typeof point === "object") {
+    const lat = Number(point.lat ?? point.latitude);
+    const lon = Number(point.lon ?? point.lng ?? point.longitude);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+  }
+
+  return null;
+}
+
+function haversineDistanceMeters(from, to) {
+  if (!from || !to) return Number.POSITIVE_INFINITY;
+
+  const earthRadius = 6371000;
+  const dLat = ((to.lat - from.lat) * Math.PI) / 180;
+  const dLon = ((to.lon - from.lon) * Math.PI) / 180;
+  const lat1 = (from.lat * Math.PI) / 180;
+  const lat2 = (to.lat * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+
+  return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function buildAddressContext(rawContext = null) {
+  if (!rawContext) return null;
+
+  const label =
+    rawContext.label ||
+    [
+      rawContext.address,
+      rawContext.code_postal || rawContext.codePostal,
+      rawContext.commune,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  const inferredPostal = label.match(/\b(\d{5})\b/)?.[1] || "";
+  const inferredCommune =
+    label.match(/\b\d{5}\s+(.+)$/)?.[1]?.trim() ||
+    "";
+
+  const codePostal = String(rawContext.code_postal || rawContext.codePostal || inferredPostal).trim();
+  const commune = String(rawContext.commune || inferredCommune).trim();
+  const houseNumber =
+    extractHouseNumber(rawContext.address) ||
+    extractHouseNumber(label) ||
+    null;
+  const lat = Number(rawContext.lat);
+  const lon = Number(rawContext.lon);
+
+  return {
+    label,
+    address: String(rawContext.address || "").trim(),
+    codePostal,
+    commune,
+    numeroImmatriculation: String(rawContext.numero_immatriculation || "").trim(),
+    houseNumber,
+    streetTokens: streetTokenSet(rawContext.address || label),
+    lat: Number.isFinite(lat) ? lat : null,
+    lon: Number.isFinite(lon) ? lon : null,
+  };
+}
+
+function isPreciseAddressContext(context) {
+  if (!context) return false;
+  return Boolean(context.houseNumber && (context.codePostal || context.commune));
+}
+
+async function geocodeAddressContext(context) {
+  if (!isPreciseAddressContext(context)) return null;
+
+  const cacheKey = `ban:${normalizeCompact(context.label)}`;
+  const hit = cacheGet(cacheKey);
+  if (hit) return hit;
+
+  const query = [context.address || context.label, context.codePostal, context.commune]
+    .filter(Boolean)
+    .join(" ");
+
+  const url = new URL(BAN_API_BASE);
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("autocomplete", "0");
+
+  const res = await fetch(url, { headers: { accept: "application/json" } });
+  if (!res.ok) {
+    return null;
+  }
+
+  const json = await res.json();
+  const first = Array.isArray(json?.features) ? json.features[0] : null;
+  const coords = first?.geometry?.coordinates;
+  if (!Array.isArray(coords) || coords.length !== 2) return null;
+
+  const resolved = {
+    lon: Number(coords[0]),
+    lat: Number(coords[1]),
+    label: first?.properties?.label || query,
+  };
+
+  if (!Number.isFinite(resolved.lon) || !Number.isFinite(resolved.lat)) {
+    return null;
+  }
+
+  cacheSet(cacheKey, resolved);
+  return resolved;
 }
 
 function pickNumber(d, keys) {
@@ -161,6 +345,93 @@ function splitCollectifIndividuel(dpeList) {
   return { collectifs, indivs };
 }
 
+function scoreDpeRecord(record, addressContext, queryPoint = null) {
+  if (!addressContext) return 0;
+
+  let score = 0;
+  const recordCity = normalizeAscii(record?.nom_commune_ban || record?.nom_commune_brut);
+  const recordPostal = String(record?.code_postal_ban || record?.code_postal_brut || "").trim();
+  const recordStreet = record?.nom_rue_ban || record?.adresse_ban || record?.adresse_complete_brut || "";
+  const recordHouseNumber = normalizeCompact(record?.numero_voie_ban || "");
+  const recordImmat = normalizeCompact(record?.numero_immatriculation_copropriete || "");
+
+  if (addressContext.codePostal && recordPostal === addressContext.codePostal) score += 12;
+  if (addressContext.commune && recordCity === normalizeAscii(addressContext.commune)) score += 12;
+
+  const overlap = scoreTokenOverlap(addressContext.streetTokens, streetTokenSet(recordStreet));
+  score += Math.round(overlap * 25);
+
+  if (addressContext.houseNumber && recordHouseNumber) {
+    if (recordHouseNumber.startsWith(normalizeCompact(addressContext.houseNumber))) {
+      score += 18;
+    } else {
+      score -= 8;
+    }
+  }
+
+  if (
+    addressContext.numeroImmatriculation &&
+    recordImmat &&
+    recordImmat === normalizeCompact(addressContext.numeroImmatriculation)
+  ) {
+    score += 60;
+  }
+
+  const candidatePoint = parseGeoPoint(record?._geopoint);
+  const originPoint =
+    queryPoint ||
+    (Number.isFinite(addressContext?.lat) && Number.isFinite(addressContext?.lon)
+      ? { lat: addressContext.lat, lon: addressContext.lon }
+      : null);
+
+  if (originPoint && candidatePoint) {
+    const distance = haversineDistanceMeters(originPoint, candidatePoint);
+    if (distance <= 8) score += 40;
+    else if (distance <= 15) score += 32;
+    else if (distance <= 25) score += 24;
+    else if (distance <= 50) score += 12;
+    else if (distance <= 90) score += 4;
+  }
+
+  return score;
+}
+
+function filterDpeListByAddress(list, addressContext, queryPoint = null) {
+  if (!addressContext) {
+    return { filtered: Array.isArray(list) ? list : [], meta: {} };
+  }
+
+  const scored = (Array.isArray(list) ? list : [])
+    .map((record) => ({
+      record,
+      score: scoreDpeRecord(record, addressContext, queryPoint),
+      date:
+        parseDate(record?.date_derniere_modification_dpe) ||
+        parseDate(record?.date_etablissement_dpe),
+    }))
+    .sort((left, right) => right.score - left.score || right.date - left.date);
+
+  const bestScore = scored[0]?.score ?? 0;
+  if (bestScore < 20) {
+    return {
+      filtered: Array.isArray(list) ? list : [],
+      meta: { address_match_mode: "fallback_radius", address_match_top_score: bestScore },
+    };
+  }
+
+  const minAcceptedScore = Math.max(20, bestScore - 18);
+  return {
+    filtered: scored
+      .filter((item) => item.score >= minAcceptedScore)
+      .map((item) => item.record),
+    meta: {
+      address_match_mode: "scored",
+      address_match_top_score: bestScore,
+      address_match_min_score: minAcceptedScore,
+    },
+  };
+}
+
 function computeConfidence({ hasCollectif, indivCountUsed, maxIndiv = 5 }) {
   if (hasCollectif) return { score: 95, label: "Élevée (DPE collectif réel)" };
   if (!indivCountUsed)
@@ -267,26 +538,67 @@ export function computeReelEtSimule(dpeList, n = 5) {
 
 
 /* --------------------- fetch adaptatif (rayon croissant) ------------------ */
-export async function fetchDpeAdaptive({ lat, lon, minResults = 8 }) {
+export async function fetchDpeAdaptive({ lat, lon, minResults = 8, addressContext = null }) {
   const radii = [15, 20, 30, 60, 120, 200];
   let last = [];
   let usedR = radii[radii.length - 1];
+  let matchMeta = {};
+  const queryPoint =
+    Number.isFinite(Number(lat)) && Number.isFinite(Number(lon))
+      ? { lat: Number(lat), lon: Number(lon) }
+      : null;
 
   for (const r of radii) {
     const list = await fetchAdeMeDpeAround({ lat, lon, r, size: 2000 });
-    last = list;
+    const filtered = filterDpeListByAddress(list, addressContext, queryPoint);
+    last = filtered.filtered;
     usedR = r;
-    if (list.length >= minResults) break;
+    matchMeta = filtered.meta;
+    if (last.length >= minResults) break;
   }
 
-  return { list: last, usedR };
+  return { list: last, usedR, matchMeta };
 }
 
 /**
  * API canonique utilisée par /copros/:id/dpe
  */
-export async function getDpeForLatLon({ lat, lon, minResults = 8, n = 5 }) {
-  const { list, usedR } = await fetchDpeAdaptive({ lat, lon, minResults });
+export async function getDpeForLatLon({
+  lat,
+  lon,
+  minResults = 8,
+  n = 5,
+  addressContext = null,
+  allowGeocode = false,
+}) {
+  const context = buildAddressContext(addressContext);
+  let queryLat = Number(lat);
+  let queryLon = Number(lon);
+  let resolvedTarget = null;
+
+  if (context && allowGeocode) {
+    const geocoded = await geocodeAddressContext(context);
+    if (geocoded) {
+      queryLat = geocoded.lat;
+      queryLon = geocoded.lon;
+      context.lat = geocoded.lat;
+      context.lon = geocoded.lon;
+      context.label = geocoded.label || context.label;
+      resolvedTarget = geocoded;
+    }
+  }
+
+  if (context && Number.isFinite(queryLat) && Number.isFinite(queryLon)) {
+    context.lat = queryLat;
+    context.lon = queryLon;
+  }
+
+  const { list, usedR, matchMeta } = await fetchDpeAdaptive({
+    lat: queryLat,
+    lon: queryLon,
+    minResults,
+    addressContext: context,
+  });
   const { dpeCollectifReel, dpeImmeubleSimule, dpeImmeubleFinal, meta } =
   computeReelEtSimule(list, n);
 
@@ -297,6 +609,12 @@ return {
   dpeCollectifReel,
   dpeImmeubleSimule,
   dpeImmeubleFinal,
-  meta,
+  meta: {
+    ...meta,
+    ...matchMeta,
+    resolved_target_label: resolvedTarget?.label || null,
+    resolved_target_lat: resolvedTarget?.lat ?? null,
+    resolved_target_lon: resolvedTarget?.lon ?? null,
+  },
 };
 }

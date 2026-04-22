@@ -115,23 +115,38 @@ export function buildApp() {
       departement,
     } = req.query;
 
-    if (!bbox) return reply.code(400).send({ error: "bbox requis" });
+    const hasBbox = bbox !== undefined && bbox !== null && String(bbox).trim() !== "";
+    let minLon = null;
+    let minLat = null;
+    let maxLon = null;
+    let maxLat = null;
 
-    const [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
-    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
-      return reply.code(400).send({ error: "bbox invalide" });
+    if (hasBbox) {
+      [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
+      if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
+        return reply.code(400).send({ error: "bbox invalide" });
+      }
     }
 
-    const lim = Math.min(Number(limit) || 5000, 20000);
+    const hasTextFilter = [syndic, q, copro, commune, code_postal, numero_immatriculation, departement]
+      .some((value) => value !== undefined && value !== null && String(value).trim() !== "");
+
+    if (!hasBbox && !hasTextFilter) {
+      return reply.code(400).send({ error: "bbox ou filtre requis" });
+    }
+
+    const lim = Math.min(Number(limit) || 5000, hasBbox ? 20000 : 3000);
 
     const where = [];
     const params = [];
     let i = 1;
 
-    const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
-    where.push(bboxSql.clause);
-    params.push(...bboxSql.params);
-    i += 4;
+    if (hasBbox) {
+      const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
+      where.push(bboxSql.clause);
+      params.push(...bboxSql.params);
+      i += 4;
+    }
 
     if (departement) {
       where.push(`departement = $${i++}`);
@@ -189,6 +204,7 @@ export function buildApp() {
         lon
       FROM copros
       WHERE ${where.join(" AND ")}
+      ORDER BY commune NULLS LAST, code_postal NULLS LAST, adresse NULLS LAST, id
       LIMIT ${lim};
     `;
 

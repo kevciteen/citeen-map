@@ -156,11 +156,24 @@ export default fp(async function exportRoutes(fastify) {
       numero_immatriculation,
       departement,
     } = req.query;
-    if (!bbox) return reply.code(400).send({ error: "bbox requis" });
+    const hasBbox = bbox !== undefined && bbox !== null && String(bbox).trim() !== "";
+    let minLon = null;
+    let minLat = null;
+    let maxLon = null;
+    let maxLat = null;
 
-    const [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
-    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
-      return reply.code(400).send({ error: "bbox invalide" });
+    if (hasBbox) {
+      [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
+      if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
+        return reply.code(400).send({ error: "bbox invalide" });
+      }
+    }
+
+    const hasTextFilter = [syndic, q, copro, commune, code_postal, numero_immatriculation, departement]
+      .some((value) => value !== undefined && value !== null && String(value).trim() !== "");
+
+    if (!hasBbox && !hasTextFilter) {
+      return reply.code(400).send({ error: "bbox ou filtre requis" });
     }
 
     const lim = Math.min(Number(limit) || 2000, 5000);
@@ -169,10 +182,12 @@ export default fp(async function exportRoutes(fastify) {
     const params = [];
     let i = 1;
 
-    const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
-    where.push(bboxSql.clause);
-    params.push(...bboxSql.params);
-    i += 4;
+    if (hasBbox) {
+      const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
+      where.push(bboxSql.clause);
+      params.push(...bboxSql.params);
+      i += 4;
+    }
 
     if (departement) {
       where.push(`departement = $${i++}`);
@@ -272,6 +287,7 @@ export default fp(async function exportRoutes(fastify) {
           lon: Number(c.lon),
           minResults: 8,
           n: 5,
+          addressContext: c,
         });
         return { c, dpe };
       } catch {
@@ -343,11 +359,24 @@ export default fp(async function exportRoutes(fastify) {
       departement,
       maxDpePerCopro = 200,
     } = req.query;
-    if (!bbox) return reply.code(400).send({ error: "bbox requis" });
+    const hasBbox = bbox !== undefined && bbox !== null && String(bbox).trim() !== "";
+    let minLon = null;
+    let minLat = null;
+    let maxLon = null;
+    let maxLat = null;
 
-    const [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
-    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
-      return reply.code(400).send({ error: "bbox invalide" });
+    if (hasBbox) {
+      [minLon, minLat, maxLon, maxLat] = String(bbox).split(",").map(Number);
+      if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
+        return reply.code(400).send({ error: "bbox invalide" });
+      }
+    }
+
+    const hasTextFilter = [syndic, q, copro, commune, code_postal, numero_immatriculation, departement]
+      .some((value) => value !== undefined && value !== null && String(value).trim() !== "");
+
+    if (!hasBbox && !hasTextFilter) {
+      return reply.code(400).send({ error: "bbox ou filtre requis" });
     }
 
     const lim = Math.min(Number(limit) || 500, 1500);
@@ -357,10 +386,12 @@ export default fp(async function exportRoutes(fastify) {
     const params = [];
     let i = 1;
 
-    const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
-    where.push(bboxSql.clause);
-    params.push(...bboxSql.params);
-    i += 4;
+    if (hasBbox) {
+      const bboxSql = buildLonLatBbox(minLon, minLat, maxLon, maxLat, i);
+      where.push(bboxSql.clause);
+      params.push(...bboxSql.params);
+      i += 4;
+    }
 
     if (departement) {
       where.push(`departement = $${i++}`);
@@ -440,6 +471,7 @@ export default fp(async function exportRoutes(fastify) {
           lon: Number(c.lon),
           minResults: 8,
           n: 5,
+          addressContext: c,
         });
         // dpe.list est déjà dédoublonnée côté service (dernier état)
         return { c, usedR: dpe.usedR, list: dpe.list || [] };
@@ -503,6 +535,7 @@ export default fp(async function exportRoutes(fastify) {
       lon: Number(copro.lon),
       minResults: 8,
       n: 5,
+      addressContext: copro,
     });
 
     const list = dpe?.list || [];
@@ -536,6 +569,7 @@ export default fp(async function exportRoutes(fastify) {
       lon,
       minResults: 8,
       n: 5,
+      addressContext: { lat, lon, label: String(req.query.address_label || "") },
       // si ton service utilise un rayon progressif, r est indicatif
     });
 
