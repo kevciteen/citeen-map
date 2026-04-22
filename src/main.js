@@ -1,7 +1,9 @@
 import "./style.css";
 import maplibregl from "maplibre-gl";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:3002";
+const API_BASE =
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.DEV ? "http://127.0.0.1:3002" : "/api");
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 const MAX_DPE_SUMMARY_IDS = 120;
 
@@ -98,10 +100,12 @@ const FALLBACK_HALO_COLOR = "rgba(96,165,250,0.18)";
 // Cache DPE: on stocke la promesse pour dédupliquer (évite multi-fetch au clic/enrich)
 const dpePromiseCache = new Map(); // key -> Promise<json>
 const dpeSummaryCache = new Map(); // key -> summary
+const addressSearchCache = new Map();
 let addressPopup = null;
 let coproPopup = null;
 let googleScriptPromise = null;
 let lastSearchFeatures = [];
+let lastSearchRequestOptions = { bboxOverride: null, omitKeys: [] };
 let activeColorHydrationToken = 0;
 
 let miniMap = null;
@@ -158,12 +162,16 @@ function getSearchFilters() {
   };
 }
 
-function buildSearchParams({ limit }) {
+function buildSearchParams({ limit, bboxOverride = null, omitKeys = [] }) {
   const filters = getSearchFilters();
-  const params = new URLSearchParams({ bbox: bboxFromMap(), limit: String(limit) });
+  const omitted = new Set(omitKeys);
+  const params = new URLSearchParams({
+    bbox: bboxOverride || bboxFromMap(),
+    limit: String(limit),
+  });
 
   for (const [key, value] of Object.entries(filters)) {
-    if (value) params.set(key, value);
+    if (value && !omitted.has(key)) params.set(key, value);
   }
 
   return params;
@@ -175,6 +183,86 @@ function distanceScoreFromCenter(feature, center) {
   const dx = Number(coords[0]) - Number(center.lng);
   const dy = Number(coords[1]) - Number(center.lat);
   return dx * dx + dy * dy;
+}
+
+function looksLikeAddressQuery(value) {
+  const query = String(value || "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!query) return false;
+  if (/\d/.test(query)) return true;
+  return /\b(rue|avenue|av\.?|boulevard|bd|place|impasse|allee|chemin|route|quai|cours|square)\b/i.test(
+    query
+  );
+}
+
+function bboxAroundPoint(lon, lat, radiusMeters = 220) {
+  const latDelta = radiusMeters / 111320;
+  const cosLat = Math.cos((Number(lat) * Math.PI) / 180);
+  const lonDelta = radiusMeters / (111320 * Math.max(Math.abs(cosLat), 0.2));
+
+  return [
+    Number(lon) - lonDelta,
+    Number(lat) - latDelta,
+    Number(lon) + lonDelta,
+    Number(lat) + latDelta,
+  ].join(",");
+}
+
+async function fetchFrenchAddressCandidates(query, limit = 5) {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) return [];
+
+  const cacheKey = `${normalizedQuery.toLowerCase()}|${limit}`;
+  if (addressSearchCache.has(cacheKey)) {
+    return addressSearchCache.get(cacheKey);
+  }
+
+  const url = new URL("https://api-adresse.data.gouv.fr/search/");
+  url.searchParams.set("q", normalizedQuery);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("autocomplete", "1");
+
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    throw new Error(`BAN HTTP ${res.status}`);
+  }
+
+  const json = await res.json();
+  const items = (Array.isArray(json?.features) ? json.features : [])
+    .map((feature) => {
+      const coords = feature?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length !== 2) return null;
+
+      const lon = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+      return {
+        label:
+          feature?.properties?.label ||
+          feature?.properties?.name ||
+          normalizedQuery,
+        lon,
+        lat,
+        score: Number(feature?.properties?.score || 0),
+      };
+    })
+    .filter(Boolean);
+
+  addressSearchCache.set(cacheKey, items);
+  return items;
+}
+
+async function resolveFrenchAddress(query) {
+  try {
+    const candidates = await fetchFrenchAddressCandidates(query, 5);
+    return candidates[0] || null;
+  } catch (err) {
+    console.warn("Geocodage BAN indisponible", err);
+    return null;
+  }
 }
 
 function ensureGooglePlacesLoaded() {
@@ -1368,7 +1456,34 @@ async function runCoproSearch() {
     return;
   }
 
-  const url = `${API_BASE}/copros?${buildSearchParams({ limit: 12000 }).toString()}`;
+  let bboxOverride = null;
+  let omitKeys = [];
+  let addressCandidate = null;
+
+  if (looksLikeAddressQuery(filters.q)) {
+    setStatus("Adresse en cours de localisation...");
+    addressCandidate = await resolveFrenchAddress(filters.q);
+
+    if (addressCandidate) {
+      bboxOverride = bboxAroundPoint(addressCandidate.lon, addressCandidate.lat, 220);
+      omitKeys = ["q"];
+
+      map.easeTo({ center: [addressCandidate.lon, addressCandidate.lat], zoom: 17 });
+      await setAddressMarkerEnhanced({
+        lat: addressCandidate.lat,
+        lon: addressCandidate.lon,
+        label: addressCandidate.label,
+      });
+    }
+  }
+
+  lastSearchRequestOptions = { bboxOverride, omitKeys };
+
+  const url = `${API_BASE}/copros?${buildSearchParams({
+    limit: 12000,
+    bboxOverride,
+    omitKeys,
+  }).toString()}`;
   const t0 = performance.now();
 
   setStatus("Recherche…");
@@ -1380,7 +1495,25 @@ async function runCoproSearch() {
 
   const geojson = await res.json();
   const ms = Math.round(performance.now() - t0);
-  const features = Array.isArray(geojson?.features) ? geojson.features : [];
+  let features = Array.isArray(geojson?.features) ? geojson.features : [];
+
+  if (addressCandidate) {
+    features = features
+      .slice()
+      .sort(
+        (a, b) =>
+          distanceScoreFromCenter(a, {
+            lng: addressCandidate.lon,
+            lat: addressCandidate.lat,
+          }) -
+          distanceScoreFromCenter(b, {
+            lng: addressCandidate.lon,
+            lat: addressCandidate.lat,
+          })
+      );
+    geojson.features = features;
+  }
+
   lastSearchFeatures = features;
 
   setStatus(`${features.length.toLocaleString()} points · ${ms} ms`);
@@ -1397,7 +1530,14 @@ async function runCoproSearch() {
 
 function exportCurrentSearchCsv() {
   if (!map.loaded()) return;
-  window.open(`${API_BASE}/export/copros_dpe.csv?${buildSearchParams({ limit: 5000 }).toString()}`, "_blank");
+  window.open(
+    `${API_BASE}/export/copros_dpe.csv?${buildSearchParams({
+      limit: 5000,
+      bboxOverride: lastSearchRequestOptions.bboxOverride,
+      omitKeys: lastSearchRequestOptions.omitKeys,
+    }).toString()}`,
+    "_blank"
+  );
 }
 
 // -------------------- Export CSV --------------------
@@ -1468,8 +1608,8 @@ async function initGoogleAutocompleteEnhanced() {
   if (!googleApi?.maps?.places) {
     if (hint) {
       hint.textContent = GOOGLE_MAPS_API_KEY
-        ? "Autocomplete Google indisponible pour le moment"
-        : "Renseigne VITE_GOOGLE_MAPS_API_KEY pour activer l'autocomplete Google";
+        ? "Autocomplete Google indisponible pour le moment. Le fallback adresse BAN reste actif."
+        : "Recherche d'adresse FR active sans Google. Ajoute VITE_GOOGLE_MAPS_API_KEY pour l'autocomplete Google.";
     }
     return;
   }
@@ -1518,6 +1658,7 @@ document.getElementById("clear").addEventListener("click", () => {
   document.getElementById("immat").value = "";
   sidebarClose();
   lastSearchFeatures = [];
+  lastSearchRequestOptions = { bboxOverride: null, omitKeys: [] };
 
   map.getSource(COPROS_SOURCE_ID)?.setData({ type: "FeatureCollection", features: [] });
   map.getSource(ADDRESS_SOURCE_ID)?.setData({ type: "FeatureCollection", features: [] });
