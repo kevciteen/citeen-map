@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 
 export const runtime = "nodejs";
 
@@ -29,23 +30,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     20,
   );
 
-  const ref = sqlite
-    .prepare(
-      `SELECT c.id, c.syndic, c.periode_construction, c.code_postal, c.commune,
-              e.classe_finale
-       FROM copros c LEFT JOIN dpe_estimates e ON e.copro_id = c.id
-       WHERE c.id = ?`,
-    )
-    .get(coproId) as
-    | {
-        id: number;
-        syndic: string | null;
-        periode_construction: string | null;
-        code_postal: string | null;
-        commune: string | null;
-        classe_finale: string | null;
-      }
-    | undefined;
+  const ref = await db.get<{
+    id: number;
+    syndic: string | null;
+    periode_construction: string | null;
+    code_postal: string | null;
+    commune: string | null;
+    classe_finale: string | null;
+  }>(
+    `SELECT c.id, c.syndic, c.periode_construction, c.code_postal, c.commune,
+            e.classe_finale
+     FROM copros c LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+     WHERE c.id = ?`,
+    [coproId],
+  );
 
   if (!ref) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -53,7 +51,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ref.syndic && ref.syndic.toLowerCase() !== "non connu" ? ref.syndic : null;
 
   const conditions: string[] = [];
-  const params2: unknown[] = [];
+  const params2: InValue[] = [];
 
   if (syndicValid) {
     conditions.push("c.syndic = ?");
@@ -79,27 +77,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const orClause = `(${conditions.join(" OR ")})`;
 
-  const items = sqlite
-    .prepare(
-      `SELECT c.id, c.nom_copro, c.adresse, c.code_postal, c.commune,
-              c.syndic, c.nb_lots_habitation,
-              e.classe_finale, e.conso_moyenne,
-              (SELECT p.id FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_id,
-              (
-                (CASE WHEN c.syndic = ? AND c.syndic IS NOT NULL THEN 5 ELSE 0 END) +
-                (CASE WHEN e.classe_finale = ? AND e.classe_finale IS NOT NULL THEN 4 ELSE 0 END) +
-                (CASE WHEN c.periode_construction = ? AND c.periode_construction IS NOT NULL THEN 3 ELSE 0 END) +
-                (CASE WHEN c.code_postal = ? AND c.code_postal IS NOT NULL THEN 2 ELSE 0 END) +
-                (CASE WHEN c.commune = ? AND c.code_postal != ? THEN 1 ELSE 0 END)
-              ) AS similarity_score
-       FROM copros c
-       LEFT JOIN dpe_estimates e ON e.copro_id = c.id
-       WHERE c.id != ?
-         AND ${orClause}
-       ORDER BY similarity_score DESC, c.id
-       LIMIT ?`,
-    )
-    .all(
+  const items = await db.all(
+    `SELECT c.id, c.nom_copro, c.adresse, c.code_postal, c.commune,
+            c.syndic, c.nb_lots_habitation,
+            e.classe_finale, e.conso_moyenne,
+            (SELECT p.id FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_id,
+            (
+              (CASE WHEN c.syndic = ? AND c.syndic IS NOT NULL THEN 5 ELSE 0 END) +
+              (CASE WHEN e.classe_finale = ? AND e.classe_finale IS NOT NULL THEN 4 ELSE 0 END) +
+              (CASE WHEN c.periode_construction = ? AND c.periode_construction IS NOT NULL THEN 3 ELSE 0 END) +
+              (CASE WHEN c.code_postal = ? AND c.code_postal IS NOT NULL THEN 2 ELSE 0 END) +
+              (CASE WHEN c.commune = ? AND c.code_postal != ? THEN 1 ELSE 0 END)
+            ) AS similarity_score
+     FROM copros c
+     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+     WHERE c.id != ?
+       AND ${orClause}
+     ORDER BY similarity_score DESC, c.id
+     LIMIT ?`,
+    [
       syndicValid ?? "",
       ref.classe_finale ?? "",
       ref.periode_construction ?? "",
@@ -109,7 +105,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       coproId,
       ...params2,
       limit,
-    );
+    ],
+  );
 
   return NextResponse.json({ items });
 }

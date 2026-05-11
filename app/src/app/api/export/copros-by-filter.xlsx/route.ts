@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 import ExcelJS from "exceljs";
 import {
   applyHeaderStyle,
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
   const inPipeline = sp.get("inPipeline");
 
   const where: string[] = [];
-  const params: unknown[] = [];
+  const params: InValue[] = [];
 
   if (cp) {
     where.push("c.code_postal LIKE ?");
@@ -159,7 +160,7 @@ export async function GET(req: NextRequest) {
   const ftsWhere = useFts ? `copros_fts MATCH ?` : "";
   const fullWhere = [ftsWhere, ...where].filter(Boolean).join(" AND ");
   const fullWhereSql = fullWhere ? `WHERE ${fullWhere}` : "";
-  const ftsParams = useFts ? [ftsQuery] : [];
+  const ftsParams: InValue[] = useFts ? [ftsQuery] : [];
 
   // Cap to MAX_ROWS
   const sql = `
@@ -173,7 +174,7 @@ export async function GET(req: NextRequest) {
     ORDER BY c.commune, c.code_postal, c.adresse
     LIMIT ?
   `;
-  const rows = sqlite.prepare(sql).all(...ftsParams, ...params, MAX_ROWS) as Record<string, unknown>[];
+  const rows = await db.all<Record<string, unknown>>(sql, [...ftsParams, ...params, MAX_ROWS]);
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "Citeen CRM";

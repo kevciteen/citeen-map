@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { Topbar } from "@/components/layout/topbar";
 import { CoproFiche } from "@/components/crm/copro-fiche";
 
@@ -40,23 +40,21 @@ export default async function CoproDetailPage({
   const coproId = Number(id);
   if (!Number.isFinite(coproId)) notFound();
 
-  const copro = sqlite
-    .prepare(
-      `SELECT c.*, e.classe_finale, e.classe_reelle, e.classe_simulee,
-              e.conso_moyenne, e.nb_dpe_individuels, e.rayon_recherche
-       FROM copros c
-       LEFT JOIN dpe_estimates e ON e.copro_id = c.id
-       WHERE c.id = ?`,
-    )
-    .get(coproId) as DbRow | undefined;
+  const copro = await db.get<DbRow>(
+    `SELECT c.*, e.classe_finale, e.classe_reelle, e.classe_simulee,
+            e.conso_moyenne, e.nb_dpe_individuels, e.rayon_recherche
+     FROM copros c
+     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+     WHERE c.id = ?`,
+    [coproId],
+  );
 
   if (!copro) notFound();
 
-  const prospect = sqlite
-    .prepare(
-      "SELECT id, stage FROM prospects WHERE copro_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .get(coproId) as { id: number; stage: string } | undefined;
+  const prospect = await db.get<{ id: number; stage: string }>(
+    "SELECT id, stage FROM prospects WHERE copro_id = ? ORDER BY id DESC LIMIT 1",
+    [coproId],
+  );
 
   return (
     <div className="flex h-full flex-col">

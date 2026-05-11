@@ -1,13 +1,12 @@
 import { Topbar } from "@/components/layout/topbar";
 import { CoprosBrowser } from "@/components/crm/copros-browser";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 
 export const dynamic = "force-dynamic";
 
-export default function CoprosPage() {
-  const total = (
-    sqlite.prepare("SELECT COUNT(*) AS c FROM copros").get() as { c: number }
-  ).c;
+export default async function CoprosPage() {
+  const row = await db.get<{ c: number }>("SELECT COUNT(*) AS c FROM copros");
+  const total = row?.c ?? 0;
 
   return (
     <div className="flex h-full flex-col">

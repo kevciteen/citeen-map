@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -13,13 +13,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = schema.safeParse(await req.json());
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
 
-  const info = sqlite
-    .prepare("INSERT INTO notes (prospect_id, body, author) VALUES (?, ?, ?)")
-    .run(pid, parsed.data.body, parsed.data.author ?? null);
-  sqlite
-    .prepare("INSERT INTO activities (prospect_id, type, payload) VALUES (?, 'note_added', ?)")
-    .run(pid, JSON.stringify({ noteId: Number(info.lastInsertRowid) }));
-  sqlite.prepare("UPDATE prospects SET updated_at = unixepoch() WHERE id = ?").run(pid);
+  const info = await db.run(
+    "INSERT INTO notes (prospect_id, body, author) VALUES (?, ?, ?)",
+    [pid, parsed.data.body, parsed.data.author ?? null],
+  );
+  await db.run(
+    "INSERT INTO activities (prospect_id, type, payload) VALUES (?, 'note_added', ?)",
+    [pid, JSON.stringify({ noteId: info.lastInsertRowid })],
+  );
+  await db.run("UPDATE prospects SET updated_at = unixepoch() WHERE id = ?", [pid]);
 
-  return NextResponse.json({ id: Number(info.lastInsertRowid) }, { status: 201 });
+  return NextResponse.json({ id: info.lastInsertRowid }, { status: 201 });
 }

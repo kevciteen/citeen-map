@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -24,28 +25,27 @@ export async function GET(req: NextRequest) {
   const stage = sp.get("stage");
 
   const where: string[] = [];
-  const params: unknown[] = [];
+  const params: InValue[] = [];
   if (stage) {
     where.push("p.stage = ?");
     params.push(stage);
   }
 
-  const rows = sqlite
-    .prepare(
-      `SELECT
-         p.id, p.copro_id, p.custom_label, p.custom_address, p.custom_lat, p.custom_lon,
-         p.stage, p.priority, p.estimated_value, p.expected_close_date,
-         p.next_action_at, p.next_action_label, p.assigned_to, p.tags,
-         p.created_at, p.updated_at,
-         c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic, c.lat as copro_lat, c.lon as copro_lon,
-         e.classe_finale
-       FROM prospects p
-       LEFT JOIN copros c ON c.id = p.copro_id
-       LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
-       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-       ORDER BY p.updated_at DESC`,
-    )
-    .all(...params);
+  const rows = await db.all(
+    `SELECT
+       p.id, p.copro_id, p.custom_label, p.custom_address, p.custom_lat, p.custom_lon,
+       p.stage, p.priority, p.estimated_value, p.expected_close_date,
+       p.next_action_at, p.next_action_label, p.assigned_to, p.tags,
+       p.created_at, p.updated_at,
+       c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic, c.lat as copro_lat, c.lon as copro_lon,
+       e.classe_finale
+     FROM prospects p
+     LEFT JOIN copros c ON c.id = p.copro_id
+     LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
+     ${where.length ? "WHERE " + where.join(" AND ") : ""}
+     ORDER BY p.updated_at DESC`,
+    params,
+  );
 
   return NextResponse.json({ items: rows });
 }
@@ -59,9 +59,10 @@ export async function POST(req: NextRequest) {
   const d = parsed.data;
 
   if (d.coproId) {
-    const existing = sqlite
-      .prepare("SELECT id FROM prospects WHERE copro_id = ?")
-      .get(d.coproId) as { id: number } | undefined;
+    const existing = await db.get<{ id: number }>(
+      "SELECT id FROM prospects WHERE copro_id = ?",
+      [d.coproId],
+    );
     if (existing) {
       return NextResponse.json(
         { error: "already_exists", prospectId: existing.id },
@@ -72,31 +73,30 @@ export async function POST(req: NextRequest) {
 
   const tagsJson = d.tags ? JSON.stringify(d.tags) : null;
 
-  const insert = sqlite.prepare(
+  const info = await db.run(
     `INSERT INTO prospects
       (copro_id, custom_label, custom_address, custom_lat, custom_lon,
        stage, priority, estimated_value, assigned_to, tags)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const info = insert.run(
-    d.coproId ?? null,
-    d.customLabel ?? null,
-    d.customAddress ?? null,
-    d.customLat ?? null,
-    d.customLon ?? null,
-    d.stage,
-    d.priority,
-    d.estimatedValue ?? null,
-    d.assignedTo ?? null,
-    tagsJson,
+    [
+      d.coproId ?? null,
+      d.customLabel ?? null,
+      d.customAddress ?? null,
+      d.customLat ?? null,
+      d.customLon ?? null,
+      d.stage,
+      d.priority,
+      d.estimatedValue ?? null,
+      d.assignedTo ?? null,
+      tagsJson,
+    ],
   );
 
-  const id = Number(info.lastInsertRowid);
-  sqlite
-    .prepare(
-      `INSERT INTO activities (prospect_id, type, payload, author) VALUES (?, 'created', NULL, NULL)`,
-    )
-    .run(id);
+  const id = info.lastInsertRowid;
+  await db.run(
+    `INSERT INTO activities (prospect_id, type, payload, author) VALUES (?, 'created', NULL, NULL)`,
+    [id],
+  );
 
   return NextResponse.json({ id }, { status: 201 });
 }

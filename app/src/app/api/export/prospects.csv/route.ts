@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 
 export const runtime = "nodejs";
 
@@ -41,21 +41,19 @@ function esc(v: unknown): string {
 }
 
 export async function GET() {
-  const rows = sqlite
-    .prepare(
-      `SELECT p.id, p.stage, p.priority, p.estimated_value,
-              p.next_action_at, p.next_action_label, p.created_at, p.updated_at,
-              c.numero_immatriculation, c.nom_copro, c.adresse, c.code_postal, c.commune,
-              c.departement, c.syndic, c.nb_lots, c.nb_lots_habitation, c.periode_construction,
-              COALESCE(c.lat, p.custom_lat) as lat,
-              COALESCE(c.lon, p.custom_lon) as lon,
-              e.classe_finale, e.classe_reelle, e.classe_simulee, e.conso_moyenne, e.nb_dpe_individuels
-       FROM prospects p
-       LEFT JOIN copros c ON c.id = p.copro_id
-       LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
-       ORDER BY p.updated_at DESC`,
-    )
-    .all() as Record<string, unknown>[];
+  const rows = await db.all<Record<string, unknown>>(
+    `SELECT p.id, p.stage, p.priority, p.estimated_value,
+            p.next_action_at, p.next_action_label, p.created_at, p.updated_at,
+            c.numero_immatriculation, c.nom_copro, c.adresse, c.code_postal, c.commune,
+            c.departement, c.syndic, c.nb_lots, c.nb_lots_habitation, c.periode_construction,
+            COALESCE(c.lat, p.custom_lat) as lat,
+            COALESCE(c.lon, p.custom_lon) as lon,
+            e.classe_finale, e.classe_reelle, e.classe_simulee, e.conso_moyenne, e.nb_dpe_individuels
+     FROM prospects p
+     LEFT JOIN copros c ON c.id = p.copro_id
+     LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
+     ORDER BY p.updated_at DESC`,
+  );
 
   const lines = [HEADER.join(",")];
   for (const r of rows) {

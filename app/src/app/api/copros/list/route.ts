@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 
 export const runtime = "nodejs";
 
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
   const offset = Math.max(num(sp.get("offset")) ?? 0, 0);
 
   const where: string[] = [];
-  const params: unknown[] = [];
+  const params: InValue[] = [];
 
   if (cp) {
     where.push("c.code_postal LIKE ?");
@@ -149,12 +150,11 @@ export async function GET(req: NextRequest) {
     .filter(Boolean)
     .join(" AND ");
   const fullWhereSql = fullWhere ? `WHERE ${fullWhere}` : "";
-  const ftsParams = useFts ? [ftsQuery] : [];
+  const ftsParams: InValue[] = useFts ? [ftsQuery] : [];
 
   const countSql = `SELECT COUNT(*) AS c ${fromSql} ${fullWhereSql}`;
-  const total = (
-    sqlite.prepare(countSql).get(...ftsParams, ...params) as { c: number }
-  ).c;
+  const countRow = await db.get<{ c: number }>(countSql, [...ftsParams, ...params]);
+  const total = countRow?.c ?? 0;
 
   const SORT_MAP: Record<string, string> = {
     default: "c.commune, c.code_postal, c.adresse",
@@ -189,7 +189,7 @@ export async function GET(req: NextRequest) {
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
   `;
-  const items = sqlite.prepare(listSql).all(...ftsParams, ...params, limit, offset);
+  const items = await db.all(listSql, [...ftsParams, ...params, limit, offset]);
 
   return NextResponse.json({ total, limit, offset, items });
 }

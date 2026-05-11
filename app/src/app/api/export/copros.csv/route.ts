@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 
 export const runtime = "nodejs";
 
@@ -48,18 +48,17 @@ export async function GET(req: NextRequest) {
   }
 
   const placeholders = ids.map(() => "?").join(",");
-  const rows = sqlite
-    .prepare(
-      `SELECT c.*, e.classe_finale, e.classe_reelle, e.classe_simulee,
-              e.conso_moyenne, e.nb_dpe_individuels, e.rayon_recherche,
-              (SELECT p.id FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_id,
-              (SELECT p.stage FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_stage
-       FROM copros c
-       LEFT JOIN dpe_estimates e ON e.copro_id = c.id
-       WHERE c.id IN (${placeholders})
-       ORDER BY c.commune, c.code_postal, c.adresse`,
-    )
-    .all(...ids) as Record<string, unknown>[];
+  const rows = await db.all<Record<string, unknown>>(
+    `SELECT c.*, e.classe_finale, e.classe_reelle, e.classe_simulee,
+            e.conso_moyenne, e.nb_dpe_individuels, e.rayon_recherche,
+            (SELECT p.id FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_id,
+            (SELECT p.stage FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_stage
+     FROM copros c
+     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+     WHERE c.id IN (${placeholders})
+     ORDER BY c.commune, c.code_postal, c.adresse`,
+    ids,
+  );
 
   const lines = [HEADER.join(",")];
   for (const r of rows) {

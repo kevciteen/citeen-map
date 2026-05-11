@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { Topbar } from "@/components/layout/topbar";
 import { ProspectDetail } from "@/components/crm/prospect-detail";
 
@@ -10,18 +10,17 @@ export default async function ProspectPage({ params }: { params: Promise<{ id: s
   const pid = Number(id);
   if (!Number.isFinite(pid)) notFound();
 
-  const prospect = sqlite
-    .prepare(
-      `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
-              c.nb_lots, c.nb_lots_habitation, c.periode_construction,
-              c.lat as copro_lat, c.lon as copro_lon, c.numero_immatriculation,
-              e.classe_finale, e.classe_reelle, e.classe_simulee, e.conso_moyenne, e.nb_dpe_individuels
-       FROM prospects p
-       LEFT JOIN copros c ON c.id = p.copro_id
-       LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
-       WHERE p.id = ?`,
-    )
-    .get(pid);
+  const prospect = await db.get(
+    `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
+            c.nb_lots, c.nb_lots_habitation, c.periode_construction,
+            c.lat as copro_lat, c.lon as copro_lon, c.numero_immatriculation,
+            e.classe_finale, e.classe_reelle, e.classe_simulee, e.conso_moyenne, e.nb_dpe_individuels
+     FROM prospects p
+     LEFT JOIN copros c ON c.id = p.copro_id
+     LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
+     WHERE p.id = ?`,
+    [pid],
+  );
 
   if (!prospect) notFound();
 

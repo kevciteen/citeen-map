@@ -1,5 +1,5 @@
 import { Topbar } from "@/components/layout/topbar";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Building2, Kanban, Activity, TrendingUp, Calendar } from "lucide-react";
 import { PIPELINE_ORDER, stageMeta, formatCurrency } from "@/lib/utils";
@@ -8,38 +8,28 @@ import { DpeBadge } from "@/components/ui/dpe-badge";
 
 export const dynamic = "force-dynamic";
 
-export default function DashboardPage() {
-  const coproCount = (sqlite.prepare("SELECT COUNT(*) AS c FROM copros").get() as { c: number }).c;
-  const prospectCount = (sqlite.prepare("SELECT COUNT(*) AS c FROM prospects").get() as { c: number }).c;
-  const wonCount = (
-    sqlite.prepare("SELECT COUNT(*) AS c FROM prospects WHERE stage='won'").get() as { c: number }
-  ).c;
-  const dpeEstimated = (
-    sqlite.prepare("SELECT COUNT(*) AS c FROM dpe_estimates").get() as { c: number }
-  ).c;
+export default async function DashboardPage() {
+  const [coproCountRow, prospectCountRow, wonCountRow, dpeEstimatedRow] = await Promise.all([
+    db.get<{ c: number }>("SELECT COUNT(*) AS c FROM copros"),
+    db.get<{ c: number }>("SELECT COUNT(*) AS c FROM prospects"),
+    db.get<{ c: number }>("SELECT COUNT(*) AS c FROM prospects WHERE stage='won'"),
+    db.get<{ c: number }>("SELECT COUNT(*) AS c FROM dpe_estimates"),
+  ]);
+  const coproCount = coproCountRow?.c ?? 0;
+  const prospectCount = prospectCountRow?.c ?? 0;
+  const wonCount = wonCountRow?.c ?? 0;
+  const dpeEstimated = dpeEstimatedRow?.c ?? 0;
 
-  const byStage = sqlite
-    .prepare(
-      "SELECT stage, COUNT(*) AS c, COALESCE(SUM(estimated_value), 0) AS total FROM prospects GROUP BY stage",
-    )
-    .all() as { stage: string; c: number; total: number }[];
+  const byStage = await db.all<{ stage: string; c: number; total: number }>(
+    "SELECT stage, COUNT(*) AS c, COALESCE(SUM(estimated_value), 0) AS total FROM prospects GROUP BY stage",
+  );
 
   const stageMap = new Map(byStage.map((r) => [r.stage, r]));
   const totalPipeline = byStage
     .filter((s) => s.stage !== "lost")
     .reduce((s, x) => s + x.total, 0);
 
-  const upcoming = sqlite
-    .prepare(
-      `SELECT p.id, p.next_action_at, p.next_action_label,
-              c.nom_copro, c.adresse, c.commune, e.classe_finale
-       FROM prospects p
-       LEFT JOIN copros c ON c.id = p.copro_id
-       LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
-       WHERE p.next_action_at IS NOT NULL AND p.stage NOT IN ('won','lost')
-       ORDER BY p.next_action_at ASC LIMIT 6`,
-    )
-    .all() as Array<{
+  const upcoming = await db.all<{
     id: number;
     next_action_at: number;
     next_action_label: string | null;
@@ -47,7 +37,15 @@ export default function DashboardPage() {
     adresse: string | null;
     commune: string | null;
     classe_finale: string | null;
-  }>;
+  }>(
+    `SELECT p.id, p.next_action_at, p.next_action_label,
+            c.nom_copro, c.adresse, c.commune, e.classe_finale
+     FROM prospects p
+     LEFT JOIN copros c ON c.id = p.copro_id
+     LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
+     WHERE p.next_action_at IS NOT NULL AND p.stage NOT IN ('won','lost')
+     ORDER BY p.next_action_at ASC LIMIT 6`,
+  );
 
   return (
     <div className="flex h-full flex-col">

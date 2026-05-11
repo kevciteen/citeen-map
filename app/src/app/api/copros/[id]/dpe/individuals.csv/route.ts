@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { estimateDpeForCopro } from "@/lib/services/dpe";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+
+type CoproRow = {
+  id: number;
+  lat: number;
+  lon: number;
+  adresse: string | null;
+  code_postal: string | null;
+  commune: string | null;
+  numero_immatriculation: string | null;
+};
 
 const HEADER = [
   "numero_dpe",
@@ -37,21 +48,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  const copro = sqlite
-    .prepare(
-      "SELECT id, lat, lon, adresse, code_postal, commune, numero_immatriculation FROM copros WHERE id = ?",
-    )
-    .get(coproId) as
-    | {
-        id: number;
-        lat: number;
-        lon: number;
-        adresse: string | null;
-        code_postal: string | null;
-        commune: string | null;
-        numero_immatriculation: string | null;
-      }
-    | undefined;
+  const copro = await db.get<CoproRow>(
+    "SELECT id, lat, lon, adresse, code_postal, commune, numero_immatriculation FROM copros WHERE id = ?",
+    [coproId],
+  );
   if (!copro) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const est = await estimateDpeForCopro({

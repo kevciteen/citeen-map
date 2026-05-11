@@ -1,19 +1,16 @@
 import { Topbar } from "@/components/layout/topbar";
 import { SyndicsBrowser } from "@/components/crm/syndics-browser";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 
 export const dynamic = "force-dynamic";
 
-export default function SyndicsPage() {
-  const total = (
-    sqlite
-      .prepare(
-        `SELECT COUNT(DISTINCT TRIM(syndic)) AS c
-         FROM copros
-         WHERE syndic IS NOT NULL AND LOWER(syndic) != 'non connu'`,
-      )
-      .get() as { c: number }
-  ).c;
+export default async function SyndicsPage() {
+  const row = await db.get<{ c: number }>(
+    `SELECT COUNT(DISTINCT TRIM(syndic)) AS c
+     FROM copros
+     WHERE syndic IS NOT NULL AND LOWER(syndic) != 'non connu'`,
+  );
+  const total = row?.c ?? 0;
 
   return (
     <div className="flex h-full flex-col">

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -33,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const d = parsed.data;
 
   const sets: string[] = [];
-  const vals: unknown[] = [];
+  const vals: InValue[] = [];
   const keys = [
     "nom_copro",
     "adresse",
@@ -48,7 +49,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   for (const k of keys) {
     if (k in d) {
       sets.push(`${k} = ?`);
-      vals.push((d as Record<string, unknown>)[k] ?? null);
+      vals.push(((d as Record<string, unknown>)[k] ?? null) as InValue);
     }
   }
   if (sets.length === 0) {
@@ -56,16 +57,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   vals.push(coproId);
 
-  const info = sqlite
-    .prepare(`UPDATE copros SET ${sets.join(", ")} WHERE id = ?`)
-    .run(...vals);
+  const info = await db.run(
+    `UPDATE copros SET ${sets.join(", ")} WHERE id = ?`,
+    vals,
+  );
   if (info.changes === 0) {
     return NextResponse.json({ error: "Copro introuvable" }, { status: 404 });
   }
 
   // Si lat/lon ou adresse changent, on invalide le cache DPE pour forcer une réestimation
   if ("lat" in d || "lon" in d || "adresse" in d || "code_postal" in d || "commune" in d) {
-    sqlite.prepare("DELETE FROM dpe_estimates WHERE copro_id = ?").run(coproId);
+    await db.run("DELETE FROM dpe_estimates WHERE copro_id = ?", [coproId]);
   }
 
   return NextResponse.json({ ok: true });

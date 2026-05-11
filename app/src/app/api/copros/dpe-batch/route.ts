@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { estimateDpeForCopro } from "@/lib/services/dpe";
 import { z } from "zod";
 
@@ -42,23 +42,21 @@ async function estimateOne(c: CoproRow) {
       section: c.section,
       numeroParcelle: c.numero_parcelle,
     });
-    sqlite
-      .prepare(
-        `INSERT INTO dpe_estimates
-         (copro_id, classe_reelle, classe_simulee, classe_finale, conso_moyenne,
-          nb_dpe_individuels, rayon_recherche, quality_level, computed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
-         ON CONFLICT(copro_id) DO UPDATE SET
-           classe_reelle = excluded.classe_reelle,
-           classe_simulee = excluded.classe_simulee,
-           classe_finale = excluded.classe_finale,
-           conso_moyenne = excluded.conso_moyenne,
-           nb_dpe_individuels = excluded.nb_dpe_individuels,
-           rayon_recherche = excluded.rayon_recherche,
-           quality_level = excluded.quality_level,
-           computed_at = unixepoch()`,
-      )
-      .run(
+    await db.run(
+      `INSERT INTO dpe_estimates
+       (copro_id, classe_reelle, classe_simulee, classe_finale, conso_moyenne,
+        nb_dpe_individuels, rayon_recherche, quality_level, computed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+       ON CONFLICT(copro_id) DO UPDATE SET
+         classe_reelle = excluded.classe_reelle,
+         classe_simulee = excluded.classe_simulee,
+         classe_finale = excluded.classe_finale,
+         conso_moyenne = excluded.conso_moyenne,
+         nb_dpe_individuels = excluded.nb_dpe_individuels,
+         rayon_recherche = excluded.rayon_recherche,
+         quality_level = excluded.quality_level,
+         computed_at = unixepoch()`,
+      [
         c.id,
         est.collectifReel?.classe ?? null,
         est.immeubleSimule?.classe ?? null,
@@ -67,7 +65,8 @@ async function estimateOne(c: CoproRow) {
         est.totalDpeMatched,
         est.rayonM,
         est.quality.level,
-      );
+      ],
+    );
     return {
       id: c.id,
       ok: true,
@@ -111,11 +110,10 @@ export async function POST(req: NextRequest) {
   let toProcess: number[] = coproIds;
   if (!forceRefresh) {
     const placeholders = coproIds.map(() => "?").join(",");
-    const alreadyDone = sqlite
-      .prepare(
-        `SELECT copro_id FROM dpe_estimates WHERE copro_id IN (${placeholders})`,
-      )
-      .all(...coproIds) as { copro_id: number }[];
+    const alreadyDone = await db.all<{ copro_id: number }>(
+      `SELECT copro_id FROM dpe_estimates WHERE copro_id IN (${placeholders})`,
+      coproIds,
+    );
     const doneSet = new Set(alreadyDone.map((r) => r.copro_id));
     toProcess = coproIds.filter((id) => !doneSet.has(id));
   }
@@ -130,13 +128,12 @@ export async function POST(req: NextRequest) {
   }
 
   const placeholders = toProcess.map(() => "?").join(",");
-  const copros = sqlite
-    .prepare(
-      `SELECT id, lat, lon, adresse, code_postal, commune,
-              numero_immatriculation, code_insee_commune, section, numero_parcelle
-       FROM copros WHERE id IN (${placeholders})`,
-    )
-    .all(...toProcess) as CoproRow[];
+  const copros = await db.all<CoproRow>(
+    `SELECT id, lat, lon, adresse, code_postal, commune,
+            numero_immatriculation, code_insee_commune, section, numero_parcelle
+     FROM copros WHERE id IN (${placeholders})`,
+    toProcess,
+  );
 
   const t0 = Date.now();
   const results = await runWithConcurrency(copros, concurrency, estimateOne);

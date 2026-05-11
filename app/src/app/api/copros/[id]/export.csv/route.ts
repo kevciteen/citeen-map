@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 
 export const runtime = "nodejs";
 
@@ -46,15 +46,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  const row = sqlite
-    .prepare(
-      `SELECT c.*, e.classe_finale, e.classe_reelle, e.classe_simulee,
-              e.conso_moyenne, e.nb_dpe_individuels, e.rayon_recherche, e.computed_at
-       FROM copros c
-       LEFT JOIN dpe_estimates e ON e.copro_id = c.id
-       WHERE c.id = ?`,
-    )
-    .get(coproId) as Record<string, unknown> | undefined;
+  const row = await db.get<Record<string, unknown>>(
+    `SELECT c.*, e.classe_finale, e.classe_reelle, e.classe_simulee,
+            e.conso_moyenne, e.nb_dpe_individuels, e.rayon_recherche, e.computed_at
+     FROM copros c
+     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+     WHERE c.id = ?`,
+    [coproId],
+  );
 
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

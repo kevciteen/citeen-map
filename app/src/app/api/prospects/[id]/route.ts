@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -21,31 +22,30 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });
 
-  const prospect = sqlite
-    .prepare(
-      `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
-              c.nb_lots, c.lat as copro_lat, c.lon as copro_lon,
-              e.classe_finale, e.conso_moyenne, e.nb_dpe_individuels
-       FROM prospects p
-       LEFT JOIN copros c ON c.id = p.copro_id
-       LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
-       WHERE p.id = ?`,
-    )
-    .get(pid);
+  const prospect = await db.get(
+    `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
+            c.nb_lots, c.lat as copro_lat, c.lon as copro_lon,
+            e.classe_finale, e.conso_moyenne, e.nb_dpe_individuels
+     FROM prospects p
+     LEFT JOIN copros c ON c.id = p.copro_id
+     LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
+     WHERE p.id = ?`,
+    [pid],
+  );
   if (!prospect) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const contacts = sqlite
-    .prepare("SELECT * FROM contacts WHERE prospect_id = ? ORDER BY id")
-    .all(pid);
-  const notes = sqlite
-    .prepare("SELECT * FROM notes WHERE prospect_id = ? ORDER BY created_at DESC")
-    .all(pid);
-  const tasks = sqlite
-    .prepare("SELECT * FROM tasks WHERE prospect_id = ? ORDER BY due_at, id")
-    .all(pid);
-  const activities = sqlite
-    .prepare("SELECT * FROM activities WHERE prospect_id = ? ORDER BY created_at DESC LIMIT 50")
-    .all(pid);
+  const [contacts, notes, tasks, activities] = await Promise.all([
+    db.all("SELECT * FROM contacts WHERE prospect_id = ? ORDER BY id", [pid]),
+    db.all(
+      "SELECT * FROM notes WHERE prospect_id = ? ORDER BY created_at DESC",
+      [pid],
+    ),
+    db.all("SELECT * FROM tasks WHERE prospect_id = ? ORDER BY due_at, id", [pid]),
+    db.all(
+      "SELECT * FROM activities WHERE prospect_id = ? ORDER BY created_at DESC LIMIT 50",
+      [pid],
+    ),
+  ]);
 
   return NextResponse.json({ prospect, contacts, notes, tasks, activities });
 }
@@ -60,7 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const d = parsed.data;
 
   const sets: string[] = ["updated_at = unixepoch()"];
-  const vals: unknown[] = [];
+  const vals: InValue[] = [];
 
   if (d.stage !== undefined) {
     sets.push("stage = ?");
@@ -92,14 +92,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   vals.push(pid);
-  sqlite.prepare(`UPDATE prospects SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  await db.run(
+    `UPDATE prospects SET ${sets.join(", ")} WHERE id = ?`,
+    vals,
+  );
 
   if (d.stage) {
-    sqlite
-      .prepare(
-        `INSERT INTO activities (prospect_id, type, payload) VALUES (?, 'stage_change', ?)`,
-      )
-      .run(pid, JSON.stringify({ stage: d.stage }));
+    await db.run(
+      `INSERT INTO activities (prospect_id, type, payload) VALUES (?, 'stage_change', ?)`,
+      [pid, JSON.stringify({ stage: d.stage })],
+    );
   }
 
   return NextResponse.json({ ok: true });
@@ -109,6 +111,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params;
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });
-  sqlite.prepare("DELETE FROM prospects WHERE id = ?").run(pid);
+  await db.run("DELETE FROM prospects WHERE id = ?", [pid]);
   return NextResponse.json({ ok: true });
 }

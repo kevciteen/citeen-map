@@ -2,8 +2,7 @@
 import { createReadStream } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse } from "csv-parse";
-import { db, sqlite } from "../src/lib/db/client";
-import { copros } from "../src/lib/db/schema";
+import { sqlite } from "../src/lib/db/client";
 
 const CSV_DIR = resolve(process.cwd(), "..", "backend", "data", "copro");
 const ALL_FILES = [
@@ -169,4 +168,3 @@ main().catch((e) => {
 });
 
 // Use db to avoid unused-import warning when tree-shaken
-void db;

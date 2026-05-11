@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sqlite } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
+import type { InValue } from "@libsql/client";
 
 export const runtime = "nodejs";
 
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
   const periode = sp.get("periode")?.trim();
 
   const where: string[] = ["c.lat IS NOT NULL", "c.lon IS NOT NULL"];
-  const params: unknown[] = [];
+  const params: InValue[] = [];
 
   if (minLat != null && maxLat != null && minLon != null && maxLon != null) {
     where.push("c.lat BETWEEN ? AND ?");
@@ -108,7 +109,7 @@ export async function GET(req: NextRequest) {
   `;
   params.push(limit);
 
-  const rows = sqlite.prepare(sql).all(...params) as CoproRow[];
+  const rows = await db.all<CoproRow>(sql, params);
 
   return NextResponse.json({
     count: rows.length,
