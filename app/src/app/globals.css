@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Bicolore Go Renov': bleu primaire + blanc cassé / gris neutre */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Bleu Go Renov' — proche de #2563eb (primary-600) */
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 13%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 13%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 51%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 217 91% 60%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    font-family:
+      "Inter",
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      Roboto,
+      Oxygen,
+      Ubuntu,
+      sans-serif;
+  }
+
+  /* MapLibre tweaks */
+  .maplibregl-ctrl-attrib-inner {
+    font-size: 10px !important;
+  }
+  .maplibregl-popup-content {
+    @apply rounded-xl border border-border bg-card text-foreground shadow-lg;
+    padding: 12px 14px;
+  }
+}
+
+@layer components {
+  /* Pastille classe DPE */
+  .dpe-pill {
+    @apply inline-flex h-6 min-w-[24px] items-center justify-center rounded px-1.5 text-xs font-bold text-white;
+  }
+  .dpe-A { background: #1f9d55; }
+  .dpe-B { background: #7cb342; }
+  .dpe-C { background: #cddc39; color: #1f2937; }
+  .dpe-D { background: #ffeb3b; color: #1f2937; }
+  .dpe-E { background: #ffb300; }
+  .dpe-F { background: #fb8c00; }
+  .dpe-G { background: #e53935; }
+  .dpe-NC { background: #94a3b8; }
+
+  /* Sidebar item */
+  .sidebar-item {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground;
+  }
+  .sidebar-item-active {
+    @apply bg-primary/10 text-primary;
+  }
+
+  /* Carte glass / premium card */
+  .premium-card {
+    @apply rounded-xl border border-border bg-card shadow-sm;
+  }
+
+  /* Mini chip / tag */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground;
+  }
+}
+
+/* ===== Print stylesheet (for "Imprimer / PDF" on fiches copro) ===== */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  html,
+  body {
+    background: white !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  aside,
+  header,
+  .print\:hidden {
+    display: none !important;
+  }
+  main {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .bg-secondary\/30,
+  .bg-secondary\/40,
+  .bg-card,
+  .bg-card\/40 {
+    background: white !important;
+  }
+  .print\:max-w-full {
+    max-width: 100% !important;
+  }
+  .print\:p-0 {
+    padding: 0 !important;
+  }
+  .print\:shadow-none {
+    box-shadow: none !important;
+  }
+}
+
+/* Scrollbar premium discreet */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
+}

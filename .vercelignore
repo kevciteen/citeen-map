@@ -1,0 +1,16 @@
+.git
+.github
+.vercel
+backend
+src
+public
+docs
+js
+db
+dist
+node_modules
+api
+data
+.env*.local
+*.log
+.DS_Store
