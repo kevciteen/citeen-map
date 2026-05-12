@@ -103,7 +103,7 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       setStatus(`init map ${w}×${h}`);
       const m = new maplibregl.Map({
         container,
-        style: "https://demotiles.maplibre.org/style.json", // TEMP: test si WebGL rend
+        style: "https://tiles.openfreemap.org/styles/liberty",
         center: [2.3522, 48.8566],
         zoom: 11,
       });
@@ -287,19 +287,30 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
   }, [items, ready]);
 
   return (
-    <div className="relative h-full w-full">
-      <div ref={containerRef} className="absolute inset-0" style={{ background: "#eef2f7" }} />
-
-      {/* DEBUG badge — à retirer une fois la map confirmée OK */}
-      <div className="pointer-events-none absolute right-3 top-3 z-20 rounded bg-black/70 px-2 py-1 font-mono text-[10px] text-white">
-        map: {status} · ready={String(ready)} · items={items.length}
-      </div>
-
-      {/* DEBUG: rectangle rouge HTML positionné au milieu — confirme si l'espace
-          du map container est visible (test non-WebGL). À retirer après diag. */}
-      <div className="pointer-events-none absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded bg-red-600 px-4 py-2 font-bold text-white shadow-2xl">
-        TEST RECTANGLE — si visible, layout OK, souci = WebGL
-      </div>
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: "100%",
+        height: "100%",
+      }}
+    >
+      <div
+        ref={containerRef}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          width: "100%",
+          height: "100%",
+          background: "#eef2f7",
+        }}
+      />
 
       {/* DPE color legend */}
       <div className="absolute left-3 top-3 z-10 rounded-lg border border-border bg-card/95 p-2 shadow backdrop-blur">
