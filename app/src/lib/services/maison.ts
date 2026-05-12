@@ -8,6 +8,7 @@
  *   - Cadastre pour confirmer que le DPE est bien sur la même parcelle que l'adresse
  */
 import { fetchAdemeDpeAround, type AdemeRecord } from "./ademe";
+import { ADEME_DPE_LINES_URL } from "./ademe-constants";
 import { geocodeAddress } from "./ban";
 import { getParcelByPoint, type Parcelle } from "./cadastre";
 
@@ -461,7 +462,7 @@ export async function lookupMaisonByAddress(query: string): Promise<MaisonLookup
  * (data‑fair supporte `qs=code_postal_ban:"75011"`) puis on filtre côté serveur
  * sur type_batiment = "maison" et la classe DPE demandée.
  */
-const ADEME_BASE = "https://data.ademe.fr/data-fair/api/v1/datasets/dpe03existant/lines";
+const ADEME_BASE = ADEME_DPE_LINES_URL;
 
 export type MaisonsZoneFilters = {
   cp?: string;

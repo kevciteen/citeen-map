@@ -1,7 +1,7 @@
 import { cacheGet, cacheSet } from "./cache";
+import { ADEME_DPE_LINES_URL } from "./ademe-constants";
 
-const DPE_API_BASE =
-  "https://data.ademe.fr/data-fair/api/v1/datasets/dpe03existant/lines";
+const DPE_API_BASE = ADEME_DPE_LINES_URL;
 
 export type AdemeRecord = {
   numero_dpe?: string;
