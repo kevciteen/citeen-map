@@ -135,17 +135,37 @@ export type MaisonDpe = {
   energie_n2: string | null;
   energie_n3: string | null;
   installation_chauffage: string | null;
+  // Équipements chauffage détaillés (matériels/générateurs)
+  generateur_chauffage: string | null;       // ex. "Chaudière fioul classique avant 1970"
+  generateur_chauffage_desc: string | null;  // description complète installation
+  emetteur_chauffage: string | null;         // ex. "Radiateur bitube..."
+  // ECS (eau chaude sanitaire)
+  generateur_ecs: string | null;
+  description_ecs: string | null;
+  volume_ballon_ecs: number | null;
+  // Climatisation
+  energie_climatisation: string | null;
+  surface_climatisee: number | null;
+  // Ventilation
   type_ventilation: string | null;
+  ventilation_recente: boolean | null;
+  // Zone climatique
+  zone_climatique: string | null;
+  // Déperditions thermiques (W/K) — où passe la chaleur
+  deperdition_murs: number | null;
+  deperdition_baies: number | null;
+  deperdition_plancher_bas: number | null;
+  deperdition_plancher_haut: number | null;
   // Coûts annuels (€/an)
   cout_total: number | null;
   cout_chauffage: number | null;
-  cout_ecs: number | null;          // eau chaude sanitaire
+  cout_ecs: number | null;
   cout_eclairage: number | null;
   cout_refroidissement: number | null;
   // Isolation (qualités)
   isolation_enveloppe: string | null;
   isolation_murs: string | null;
-  isolation_toiture: string | null;   // plancher_haut
+  isolation_toiture: string | null;
   isolation_plancher_bas: string | null;
   isolation_menuiseries: string | null;
   // Adresse
@@ -223,9 +243,41 @@ function toMaisonDpe(rec: AdemeRecord): MaisonDpe {
     installation_chauffage: pickString(rec, [
       "type_installation_chauffage",
       "type_installation_chauffage_n1",
-      "description_installation_chauffage_n1",
     ]),
+    // Équipements détaillés
+    generateur_chauffage: pickString(rec, [
+      "type_generateur_chauffage_principal",
+      "type_generateur_n1_installation_n1",
+    ]),
+    generateur_chauffage_desc: pickString(rec, [
+      "description_installation_chauffage_n1",
+      "description_generateur_chauffage_n1_installation_n1",
+    ]),
+    emetteur_chauffage: pickString(rec, [
+      "type_emetteur_installation_chauffage_n1",
+      "type_emetteur_chauffage",
+    ]),
+    // ECS
+    generateur_ecs: pickString(rec, [
+      "type_generateur_n1_ecs_n1",
+      "type_generateur_chauffage_principal_ecs",
+    ]),
+    description_ecs: pickString(rec, ["description_installation_ecs_n1"]),
+    volume_ballon_ecs: pickNumber(rec, ["volume_stockage_generateur_n1_ecs_n1"]),
+    // Climatisation
+    energie_climatisation: pickString(rec, ["type_energie_climatisation"]),
+    surface_climatisee: pickNumber(rec, ["surface_climatisee"]),
+    // Ventilation
     type_ventilation: pickString(rec, ["type_ventilation"]),
+    ventilation_recente:
+      pickNumber(rec, ["ventilation_posterieure_2012"]) === 1 ? true : null,
+    // Zone climatique
+    zone_climatique: pickString(rec, ["zone_climatique"]),
+    // Déperditions thermiques
+    deperdition_murs: pickNumber(rec, ["deperditions_murs"]),
+    deperdition_baies: pickNumber(rec, ["deperditions_baies_vitrees"]),
+    deperdition_plancher_bas: pickNumber(rec, ["deperditions_planchers_bas"]),
+    deperdition_plancher_haut: pickNumber(rec, ["deperditions_planchers_hauts"]),
     // Coûts annuels
     cout_total: pickNumber(rec, ["cout_total_5_usages"]),
     cout_chauffage: pickNumber(rec, ["cout_chauffage"]),

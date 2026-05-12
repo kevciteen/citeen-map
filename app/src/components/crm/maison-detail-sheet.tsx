@@ -31,7 +31,21 @@ type MaisonDpe = {
   energie_n2: string | null;
   energie_n3: string | null;
   installation_chauffage: string | null;
+  generateur_chauffage: string | null;
+  generateur_chauffage_desc: string | null;
+  emetteur_chauffage: string | null;
+  generateur_ecs: string | null;
+  description_ecs: string | null;
+  volume_ballon_ecs: number | null;
+  energie_climatisation: string | null;
+  surface_climatisee: number | null;
   type_ventilation: string | null;
+  ventilation_recente: boolean | null;
+  zone_climatique: string | null;
+  deperdition_murs: number | null;
+  deperdition_baies: number | null;
+  deperdition_plancher_bas: number | null;
+  deperdition_plancher_haut: number | null;
   cout_total: number | null;
   cout_chauffage: number | null;
   cout_ecs: number | null;
@@ -201,14 +215,72 @@ export function MaisonDetailSheet({
               <DpeScaleBar active={maison.classe} />
             </div>
 
-            {/* CHAUFFAGE */}
-            <Section icon={<Flame className="h-4 w-4 text-orange-500" />} title="Chauffage & énergie">
+            {/* CHAUFFAGE — Équipements détaillés */}
+            <Section icon={<Flame className="h-4 w-4 text-orange-500" />} title="Chauffage — équipements">
               <Row label="Énergie principale" value={maison.energie_principale_chauffage} strong />
               {maison.energie_n2 ? <Row label="Énergie secondaire" value={maison.energie_n2} /> : null}
               {maison.energie_n3 ? <Row label="Énergie tertiaire" value={maison.energie_n3} /> : null}
-              <Row label="Installation chauffage" value={maison.installation_chauffage} />
-              <Row label="Ventilation" value={maison.type_ventilation} />
+              <Row label="Générateur" value={maison.generateur_chauffage} strong />
+              <Row label="Émetteurs" value={maison.emetteur_chauffage} />
+              <Row label="Installation" value={maison.installation_chauffage} />
+              {maison.generateur_chauffage_desc ? (
+                <div className="mt-2 rounded-lg bg-background/70 p-2 text-[11px] italic text-muted-foreground">
+                  💬 <strong>Description complète :</strong> {maison.generateur_chauffage_desc}
+                </div>
+              ) : null}
             </Section>
+
+            {/* ECS */}
+            {maison.generateur_ecs || maison.description_ecs ? (
+              <Section icon={<Zap className="h-4 w-4 text-cyan-600" />} title="Eau chaude sanitaire">
+                <Row label="Générateur ECS" value={maison.generateur_ecs} strong />
+                <Row label="Configuration" value={maison.description_ecs} />
+                {maison.volume_ballon_ecs ? (
+                  <Row label="Volume ballon" value={`${maison.volume_ballon_ecs} L`} />
+                ) : null}
+              </Section>
+            ) : null}
+
+            {/* VENTILATION + CLIMATISATION */}
+            {(maison.type_ventilation || maison.energie_climatisation) ? (
+              <Section icon={<Wind className="h-4 w-4 text-sky-600" />} title="Ventilation & climatisation">
+                {maison.type_ventilation ? (
+                  <Row
+                    label="Type ventilation"
+                    value={
+                      maison.type_ventilation +
+                      (maison.ventilation_recente ? " (post‑2012)" : "")
+                    }
+                  />
+                ) : null}
+                {maison.energie_climatisation ? (
+                  <Row label="Climatisation" value={`${maison.energie_climatisation}${maison.surface_climatisee ? ` (${maison.surface_climatisee} m²)` : ""}`} />
+                ) : null}
+                {maison.zone_climatique ? (
+                  <Row label="Zone climatique" value={maison.zone_climatique} mono />
+                ) : null}
+              </Section>
+            ) : null}
+
+            {/* PERTES THERMIQUES */}
+            {maison.deperdition_murs ||
+            maison.deperdition_baies ||
+            maison.deperdition_plancher_bas ||
+            maison.deperdition_plancher_haut ? (
+              <Section
+                icon={<Snowflake className="h-4 w-4 text-blue-500" />}
+                title="Pertes thermiques par poste (W/K)"
+              >
+                <DeperditionRow label="Murs" value={maison.deperdition_murs} />
+                <DeperditionRow label="Toiture / plafond" value={maison.deperdition_plancher_haut} />
+                <DeperditionRow label="Plancher bas" value={maison.deperdition_plancher_bas} />
+                <DeperditionRow label="Baies vitrées" value={maison.deperdition_baies} />
+                <p className="mt-2 rounded-lg bg-blue-50 p-2 text-[11px] text-blue-900">
+                  💡 Plus la valeur W/K est élevée, plus la perte est forte — ces postes sont les
+                  cibles prioritaires de rénovation (isolation, vitrage…).
+                </p>
+              </Section>
+            ) : null}
 
             {/* COÛTS */}
             <Section icon={<Wallet className="h-4 w-4 text-emerald-600" />} title="Coûts annuels estimés (€)">
@@ -357,6 +429,42 @@ function Row({
   );
 }
 
+function DeperditionRow({ label, value }: { label: string; value: number | null }) {
+  if (value == null) {
+    return (
+      <div className="flex items-center justify-between gap-3 border-b border-border/30 py-1 text-xs last:border-0">
+        <span className="shrink-0 text-muted-foreground">{label}</span>
+        <span className="text-muted-foreground">—</span>
+      </div>
+    );
+  }
+  // Color scale: green < 50, yellow 50-150, orange 150-300, red > 300
+  const color =
+    value < 50 ? "#1f9d55"
+    : value < 150 ? "#cddc39"
+    : value < 300 ? "#fb8c00"
+    : "#e53935";
+  const intensity =
+    value < 50 ? "Faible"
+    : value < 150 ? "Modérée"
+    : value < 300 ? "Élevée"
+    : "Très élevée";
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-border/30 py-1 text-xs last:border-0">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-2">
+        <span className="font-mono font-bold">{Math.round(value)} W/K</span>
+        <span
+          className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+          style={{ background: color }}
+        >
+          {intensity}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function IsolationRow({ label, value }: { label: string; value: string | null }) {
   const badge = isoBadge(value);
   return (
@@ -406,7 +514,5 @@ function fmtDate(s: string | null): string | null {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString("fr-FR");
 }
 
-void Snowflake;
-void Wind;
 void Calendar;
 void Badge;
