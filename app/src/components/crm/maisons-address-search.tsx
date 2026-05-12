@@ -1,23 +1,45 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, MapPin, Home, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle } from "lucide-react";
+import { Loader2, MapPin, Home, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DpeBadge, DpeScaleBar } from "@/components/ui/dpe-badge";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { MaisonDetailSheet } from "@/components/crm/maison-detail-sheet";
 
 type MaisonDpe = {
   numero_dpe: string;
   classe: string;
   ges: string;
   conso: number | null;
+  emission_ges: number | null;
   surface: number | null;
   date: string | null;
+  date_visite: string | null;
+  date_fin_validite: string | null;
   annee_construction: number | null;
-  energie_principale_chauffage: string | null;
+  nb_niveaux: number | null;
+  nb_pieces: number | null;
+  hauteur_sous_plafond: number | null;
   type_batiment: string | null;
+  methode_dpe: string | null;
+  energie_principale_chauffage: string | null;
+  energie_n2: string | null;
+  energie_n3: string | null;
+  installation_chauffage: string | null;
+  type_ventilation: string | null;
+  cout_total: number | null;
+  cout_chauffage: number | null;
+  cout_ecs: number | null;
+  cout_eclairage: number | null;
+  cout_refroidissement: number | null;
+  isolation_enveloppe: string | null;
+  isolation_murs: string | null;
+  isolation_toiture: string | null;
+  isolation_plancher_bas: string | null;
+  isolation_menuiseries: string | null;
   address: {
     housenumber: string | null;
     street: string | null;
@@ -356,6 +378,14 @@ function MaisonResultCard({
               {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
               Ajouter au pipeline
             </Button>
+            <MaisonDetailSheet
+              maison={m}
+              trigger={
+                <button className="flex items-center gap-1 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-foreground hover:bg-white/90">
+                  <Eye className="h-3 w-3" /> Détail complet
+                </button>
+              }
+            />
             <a
               href={m.ademe_url}
               target="_blank"

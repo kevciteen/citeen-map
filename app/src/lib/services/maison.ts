@@ -119,11 +119,36 @@ export type MaisonDpe = {
   classe: string;
   ges: string;
   conso: number | null;
+  emission_ges: number | null;
   surface: number | null;
   date: string | null;
+  date_visite: string | null;
+  date_fin_validite: string | null;
   annee_construction: number | null;
-  energie_principale_chauffage: string | null;
+  nb_niveaux: number | null;
+  nb_pieces: number | null;
+  hauteur_sous_plafond: number | null;
   type_batiment: string | null;
+  methode_dpe: string | null;
+  // Chauffage
+  energie_principale_chauffage: string | null;
+  energie_n2: string | null;
+  energie_n3: string | null;
+  installation_chauffage: string | null;
+  type_ventilation: string | null;
+  // Coûts annuels (€/an)
+  cout_total: number | null;
+  cout_chauffage: number | null;
+  cout_ecs: number | null;          // eau chaude sanitaire
+  cout_eclairage: number | null;
+  cout_refroidissement: number | null;
+  // Isolation (qualités)
+  isolation_enveloppe: string | null;
+  isolation_murs: string | null;
+  isolation_toiture: string | null;   // plancher_haut
+  isolation_plancher_bas: string | null;
+  isolation_menuiseries: string | null;
+  // Adresse
   address: {
     housenumber: string | null;
     street: string | null;
@@ -153,6 +178,14 @@ export type MaisonLookupResult = {
   notes: string[];
 };
 
+function pickString(d: AdemeRecord, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = d[k];
+    if (v != null && v !== "") return String(v);
+  }
+  return null;
+}
+
 function toMaisonDpe(rec: AdemeRecord): MaisonDpe {
   const numero = String(rec.numero_dpe ?? "");
   return {
@@ -160,22 +193,61 @@ function toMaisonDpe(rec: AdemeRecord): MaisonDpe {
     classe: String(rec.etiquette_dpe ?? "NC").toUpperCase(),
     ges: String(rec.etiquette_ges ?? "NC").toUpperCase(),
     conso: pickNumber(rec, ["conso_5_usages_par_m2_ep"]),
-    surface: pickNumber(rec, ["surface_habitable_logement", "surface_habitable_immeuble"]),
-    date: (rec.date_etablissement_dpe as string) ?? (rec.date_derniere_modification_dpe as string) ?? null,
+    emission_ges: pickNumber(rec, [
+      "emission_ges_5_usages_par_m2",
+      "emission_ges_5_usages_m2",
+    ]),
+    surface: pickNumber(rec, [
+      "surface_habitable_logement",
+      "surface_habitable_immeuble",
+    ]),
+    date: pickString(rec, [
+      "date_etablissement_dpe",
+      "date_derniere_modification_dpe",
+    ]),
+    date_visite: pickString(rec, ["date_visite_diagnostiqueur"]),
+    date_fin_validite: pickString(rec, ["date_fin_validite_dpe"]),
     annee_construction: pickNumber(rec, ["annee_construction"]),
-    energie_principale_chauffage:
-      (rec["type_energie_principale_chauffage"] as string) ??
-      (rec["type_energie_n1"] as string) ??
-      null,
-    type_batiment: (rec.type_batiment as string) ?? null,
+    nb_niveaux: pickNumber(rec, ["nb_niveau", "nombre_niveau_logement"]),
+    nb_pieces: pickNumber(rec, ["nombre_pieces_principales"]),
+    hauteur_sous_plafond: pickNumber(rec, ["hauteur_sous_plafond"]),
+    type_batiment: pickString(rec, ["type_batiment"]),
+    methode_dpe: pickString(rec, ["nom_methode_dpe"]),
+    // Chauffage
+    energie_principale_chauffage: pickString(rec, [
+      "type_energie_principale_chauffage",
+      "type_energie_n1",
+    ]),
+    energie_n2: pickString(rec, ["type_energie_n2"]),
+    energie_n3: pickString(rec, ["type_energie_n3"]),
+    installation_chauffage: pickString(rec, [
+      "type_installation_chauffage",
+      "type_installation_chauffage_n1",
+      "description_installation_chauffage_n1",
+    ]),
+    type_ventilation: pickString(rec, ["type_ventilation"]),
+    // Coûts annuels
+    cout_total: pickNumber(rec, ["cout_total_5_usages"]),
+    cout_chauffage: pickNumber(rec, ["cout_chauffage"]),
+    cout_ecs: pickNumber(rec, ["cout_ecs", "cout_eau_chaude_sanitaire"]),
+    cout_eclairage: pickNumber(rec, ["cout_eclairage"]),
+    cout_refroidissement: pickNumber(rec, ["cout_refroidissement"]),
+    // Isolation
+    isolation_enveloppe: pickString(rec, ["qualite_isolation_enveloppe"]),
+    isolation_murs: pickString(rec, ["qualite_isolation_murs"]),
+    isolation_toiture: pickString(rec, [
+      "qualite_isolation_plancher_haut_toit",
+      "qualite_isolation_plancher_haut",
+    ]),
+    isolation_plancher_bas: pickString(rec, ["qualite_isolation_plancher_bas"]),
+    isolation_menuiseries: pickString(rec, ["qualite_isolation_menuiseries"]),
     address: {
-      housenumber: (rec.numero_voie_ban as string) ?? null,
-      street: (rec.nom_rue_ban as string) ?? null,
-      postcode: (rec.code_postal_ban as string) ?? (rec.code_postal_brut as string) ?? null,
-      city: (rec.nom_commune_ban as string) ?? (rec.nom_commune_brut as string) ?? null,
+      housenumber: pickString(rec, ["numero_voie_ban"]),
+      street: pickString(rec, ["nom_rue_ban"]),
+      postcode: pickString(rec, ["code_postal_ban", "code_postal_brut"]),
+      city: pickString(rec, ["nom_commune_ban", "nom_commune_brut"]),
       label:
-        (rec.adresse_ban as string) ??
-        (rec.adresse_complete_brut as string) ??
+        pickString(rec, ["adresse_ban", "adresse_complete_brut"]) ??
         `${rec.nom_rue_ban ?? ""} ${rec.code_postal_ban ?? ""} ${rec.nom_commune_ban ?? ""}`.trim(),
     },
     lat: parseGeoPoint(rec._geopoint)?.lat ?? null,
@@ -343,10 +415,16 @@ export type MaisonsZoneFilters = {
   cp?: string;
   commune?: string;
   dpeClasses?: string[];     // ["F", "G"]
+  gesClasses?: string[];     // ["F", "G"] sur l'étiquette GES
   consoMin?: number;
   consoMax?: number;
+  surfaceMin?: number;
+  surfaceMax?: number;
   yearMin?: number;          // année construction min
   yearMax?: number;
+  energie?: string[];        // ["fioul", "gaz", ...] match substring sur energie_n1
+  isolationMursMauvaise?: boolean; // filtre passoires murs
+  dpeAncienAnnees?: number;  // DPE de plus de N ans (utile pour relances)
   limit?: number;            // 1‑1000
   size?: number;             // taille de la fenêtre ADEME (max 10000)
 };
@@ -382,6 +460,12 @@ export async function searchMaisonsByZone(
       set.has(String(r.etiquette_dpe ?? "NC").toUpperCase()),
     );
   }
+  if (f.gesClasses && f.gesClasses.length > 0) {
+    const set = new Set(f.gesClasses.map((c) => c.toUpperCase()));
+    records = records.filter((r) =>
+      set.has(String(r.etiquette_ges ?? "NC").toUpperCase()),
+    );
+  }
   if (f.consoMin != null) {
     records = records.filter((r) => {
       const c = pickNumber(r, ["conso_5_usages_par_m2_ep"]);
@@ -394,6 +478,18 @@ export async function searchMaisonsByZone(
       return c != null && c <= f.consoMax!;
     });
   }
+  if (f.surfaceMin != null) {
+    records = records.filter((r) => {
+      const s = pickNumber(r, ["surface_habitable_logement"]);
+      return s != null && s >= f.surfaceMin!;
+    });
+  }
+  if (f.surfaceMax != null) {
+    records = records.filter((r) => {
+      const s = pickNumber(r, ["surface_habitable_logement"]);
+      return s != null && s <= f.surfaceMax!;
+    });
+  }
   if (f.yearMin != null) {
     records = records.filter((r) => {
       const y = pickNumber(r, ["annee_construction"]);
@@ -404,6 +500,30 @@ export async function searchMaisonsByZone(
     records = records.filter((r) => {
       const y = pickNumber(r, ["annee_construction"]);
       return y != null && y <= f.yearMax!;
+    });
+  }
+  if (f.energie && f.energie.length > 0) {
+    const wanted = f.energie.map((e) => normalizeAscii(e));
+    records = records.filter((r) => {
+      const energie = normalizeAscii(
+        (r["type_energie_principale_chauffage"] as string) ??
+          (r["type_energie_n1"] as string) ??
+          "",
+      );
+      return wanted.some((w) => energie.includes(w));
+    });
+  }
+  if (f.isolationMursMauvaise) {
+    records = records.filter((r) => {
+      const q = String(r["qualite_isolation_murs"] ?? "").toLowerCase();
+      return q.includes("insuffisante") || q.includes("tres mauvaise") || q.includes("mauvaise") || q.includes("moyenne");
+    });
+  }
+  if (f.dpeAncienAnnees && f.dpeAncienAnnees > 0) {
+    const cutoff = Date.now() - f.dpeAncienAnnees * 365 * 24 * 3600 * 1000;
+    records = records.filter((r) => {
+      const t = Date.parse(String(r.date_etablissement_dpe ?? ""));
+      return Number.isFinite(t) && t < cutoff;
     });
   }
 
