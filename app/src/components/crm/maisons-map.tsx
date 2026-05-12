@@ -113,11 +113,23 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       timers = [50, 200, 500, 1000].map((d) => window.setTimeout(safeResize, d));
 
       m.on("error", (e) => {
-        // Log toutes les erreurs MapLibre dans le badge debug pour diag prod
         const msg = e?.error?.message ?? "unknown error";
         setStatus(`map error: ${msg.slice(0, 80)}`);
         // eslint-disable-next-line no-console
         console.error("[MaisonsMap] map error", e);
+      });
+
+      let dataLoadCount = 0;
+      m.on("sourcedata", (e) => {
+        if (e.isSourceLoaded && e.sourceId === "openmaptiles") dataLoadCount++;
+      });
+
+      m.on("idle", () => {
+        // Une fois le render terminé on inspecte le DOM canvas pour confirmer
+        const c = m.getCanvas();
+        setStatus(
+          `idle · canvas ${c.width}×${c.height} · tiles=${dataLoadCount}`,
+        );
       });
 
       m.on("load", () => {
