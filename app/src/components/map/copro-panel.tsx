@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { DpeBadge, DpeScaleBar } from "@/components/ui/dpe-badge";
 import { Badge } from "@/components/ui/badge";
+import { SyndicContactCard } from "@/components/map/syndic-contact-card";
 import { toast } from "sonner";
 
 type CoproDetail = {
@@ -213,9 +214,17 @@ export function CoproPanel({
               {(copro.periode_construction || "—").replace(/_/g, " ")}
             </p>
           </div>
-          <div className="col-span-2">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Syndic</p>
-            <p className="truncate text-sm font-medium">{copro.syndic || "—"}</p>
+          <div className="col-span-2 space-y-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Syndic</p>
+              <p className="truncate text-sm font-medium">{copro.syndic || "—"}</p>
+            </div>
+            {copro.syndic ? (
+              <SyndicContactCard
+                syndicName={copro.syndic}
+                coproContext={{ nom: copro.nom_copro, adresse: copro.adresse }}
+              />
+            ) : null}
           </div>
         </div>
 
