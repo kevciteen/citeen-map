@@ -103,7 +103,7 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       setStatus(`init map ${w}×${h}`);
       const m = new maplibregl.Map({
         container,
-        style: "https://tiles.openfreemap.org/styles/liberty",
+        style: "https://demotiles.maplibre.org/style.json", // TEMP: test si WebGL rend
         center: [2.3522, 48.8566],
         zoom: 11,
       });
@@ -135,18 +135,6 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
 
       m.on("load", () => {
         setStatus("style loaded");
-
-        // TEST WebGL render : un layer de background CYAN très visible.
-        // Si on ne voit pas ce cyan, c'est que WebGL ne peint pas du tout.
-        try {
-          m.addLayer({
-            id: "__debug_bg__",
-            type: "background",
-            paint: { "background-color": "#00ffff", "background-opacity": 0.5 },
-          });
-        } catch (e) {
-          console.error("[MaisonsMap] debug bg fail", e);
-        }
 
         m.addSource("maisons", {
           type: "geojson",
