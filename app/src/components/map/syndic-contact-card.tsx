@@ -8,6 +8,7 @@ import {
   Loader2,
   Mail,
   MapPin,
+  Phone,
   Search,
   Users,
 } from "lucide-react";
@@ -26,6 +27,7 @@ function slugify(name: string): string {
 
 type SyndicContact = {
   source: string;
+  slug?: string;
   nomComplet: string;
   siren: string;
   siretSiege: string | null;
@@ -38,6 +40,12 @@ type SyndicContact = {
   dirigeant: string | null;
   trancheEffectif: string | null;
   matchScore: number;
+  // Phase C : enrichissements user persistés
+  email?: string | null;
+  phone?: string | null;
+  contactPerson?: string | null;
+  website?: string | null;
+  hasUserEdits?: boolean;
 };
 
 export function SyndicContactCard({
@@ -182,6 +190,49 @@ export function SyndicContactCard({
         </div>
       ) : null}
 
+      {/* Coordonnées user-edit — affichées dès qu'enrichies sur la fiche syndic */}
+      {contact.hasUserEdits ? (
+        <div className="space-y-1 rounded-md border border-emerald-300 bg-white/60 p-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+            Contacts (renseignés en interne)
+          </p>
+          {contact.email ? (
+            <div className="flex items-center gap-2 text-xs text-emerald-950">
+              <Mail className="h-3 w-3 text-emerald-700" />
+              <a href={`mailto:${contact.email}`} className="hover:underline">
+                {contact.email}
+              </a>
+              <button
+                onClick={() => copy("Email", contact.email!)}
+                className="ml-auto rounded p-0.5 text-emerald-700 hover:bg-emerald-100"
+              >
+                <Copy className="h-3 w-3" />
+              </button>
+            </div>
+          ) : null}
+          {contact.phone ? (
+            <div className="flex items-center gap-2 text-xs text-emerald-950">
+              <Phone className="h-3 w-3 text-emerald-700" />
+              <a href={`tel:${contact.phone}`} className="hover:underline">
+                {contact.phone}
+              </a>
+              <button
+                onClick={() => copy("Téléphone", contact.phone!)}
+                className="ml-auto rounded p-0.5 text-emerald-700 hover:bg-emerald-100"
+              >
+                <Copy className="h-3 w-3" />
+              </button>
+            </div>
+          ) : null}
+          {contact.contactPerson ? (
+            <div className="flex items-center gap-2 text-xs text-emerald-950">
+              <Users className="h-3 w-3 text-emerald-700" />
+              <span>{contact.contactPerson}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-1.5 pt-1">
         <Link
           href={`/syndics/${slugify(syndicName)}?name=${encodeURIComponent(syndicName)}`}
@@ -190,10 +241,11 @@ export function SyndicContactCard({
           <IdCard className="h-3 w-3" /> Ouvrir la fiche
         </Link>
         <a
-          href={`mailto:?subject=${mailtoSubject}&body=${mailtoBody}`}
+          href={`mailto:${contact.email ?? ""}?subject=${mailtoSubject}&body=${mailtoBody}`}
           className="flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-900 hover:bg-emerald-100"
         >
-          <Mail className="h-3 w-3" /> Composer un email
+          <Mail className="h-3 w-3" />
+          {contact.email ? "Envoyer email" : "Composer email"}
         </a>
         <a
           href={`https://www.google.com/search?q=${encodeURIComponent(

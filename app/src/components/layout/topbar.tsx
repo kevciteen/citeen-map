@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ArrowLeft, Bell, Search, User2 } from "lucide-react";
+import { ArrowLeft, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { NotificationBell } from "@/components/collab/notification-bell";
+import { UserMenu } from "@/components/layout/user-menu";
 
 export function Topbar({ title, subtitle }: { title: string; subtitle?: string }) {
   const router = useRouter();
@@ -56,15 +58,8 @@ export function Topbar({ title, subtitle }: { title: string; subtitle?: string }
             className="h-9 w-80 pl-9 text-sm"
           />
         </form>
-        <button
-          aria-label="Notifications"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-secondary"
-        >
-          <Bell className="h-4 w-4" />
-        </button>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <User2 className="h-4 w-4" />
-        </div>
+        <NotificationBell />
+        <UserMenu />
       </div>
     </header>
   );

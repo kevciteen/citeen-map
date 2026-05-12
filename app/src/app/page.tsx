@@ -1,5 +1,9 @@
 import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth/session";
 
-export default function HomePage() {
-  redirect("/map");
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const me = await getCurrentUser().catch(() => null);
+  redirect(me ? "/today" : "/login");
 }
