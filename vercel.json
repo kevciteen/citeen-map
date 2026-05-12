@@ -3,6 +3,5 @@
   "framework": "nextjs",
   "buildCommand": "cd app && npm install --include=dev && npm run build",
   "installCommand": "echo 'install happens in buildCommand'",
-  "outputDirectory": "app/.next",
-  "rootDirectory": "app"
+  "outputDirectory": "app/.next"
 }
