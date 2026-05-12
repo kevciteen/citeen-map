@@ -135,6 +135,19 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
 
       m.on("load", () => {
         setStatus("style loaded");
+
+        // TEST WebGL render : un layer de background CYAN très visible.
+        // Si on ne voit pas ce cyan, c'est que WebGL ne peint pas du tout.
+        try {
+          m.addLayer({
+            id: "__debug_bg__",
+            type: "background",
+            paint: { "background-color": "#00ffff", "background-opacity": 0.5 },
+          });
+        } catch (e) {
+          console.error("[MaisonsMap] debug bg fail", e);
+        }
+
         m.addSource("maisons", {
           type: "geojson",
           data: { type: "FeatureCollection", features: [] },
