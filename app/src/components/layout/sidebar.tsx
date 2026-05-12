@@ -6,6 +6,7 @@ import {
   Kanban,
   LayoutDashboard,
   Building2,
+  Home,
   Settings,
   FileDown,
   PlusCircle,
@@ -18,6 +19,7 @@ const items = [
   { href: "/map", label: "Carte prospection", icon: MapIcon },
   { href: "/prospects", label: "Pipeline", icon: Kanban },
   { href: "/copros", label: "Copropriétés", icon: Building2 },
+  { href: "/maisons", label: "Maisons individuelles", icon: Home },
   { href: "/syndics", label: "Syndics", icon: Users },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];

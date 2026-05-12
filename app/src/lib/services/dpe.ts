@@ -573,6 +573,9 @@ function computeReelEtSimule(
   | "matchReasons"
   | "ctxResolved"
   | "matchedRecords"
+  | "quality"
+  | "banResolved"
+  | "parcelle"
 > {
   const items = list.map((d) => ({
     raw: d,
