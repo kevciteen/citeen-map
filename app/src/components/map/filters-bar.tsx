@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
-import { Search, Sliders, X } from "lucide-react";
+import { Building2, Home, Search, Sliders, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { cn } from "@/lib/utils";
+
+export type MapMode = "copros" | "maisons" | "both";
 
 const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G", "NC"] as const;
 const DEPARTEMENTS = ["75", "77", "78", "91", "92", "93", "94", "95"];
@@ -25,6 +27,7 @@ export type MapFilters = {
   dpeClasses: string[];
   minLots: number | null;
   periode: string;
+  mode: MapMode;
 };
 
 export const DEFAULT_FILTERS: MapFilters = {
@@ -35,6 +38,7 @@ export const DEFAULT_FILTERS: MapFilters = {
   dpeClasses: [],
   minLots: null,
   periode: "",
+  mode: "copros",
 };
 
 export function FiltersBar({
@@ -76,13 +80,39 @@ export function FiltersBar({
 
         {open ? (
           <div className="space-y-3 p-4">
+            {/* Mode toggle : copros / maisons / les deux */}
+            <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+              <ModeBtn
+                active={value.mode === "copros"}
+                onClick={() => onChange({ ...value, mode: "copros" })}
+                icon={<Building2 className="h-3.5 w-3.5" />}
+                label="Copros"
+              />
+              <ModeBtn
+                active={value.mode === "maisons"}
+                onClick={() => onChange({ ...value, mode: "maisons" })}
+                icon={<Home className="h-3.5 w-3.5" />}
+                label="Maisons"
+              />
+              <ModeBtn
+                active={value.mode === "both"}
+                onClick={() => onChange({ ...value, mode: "both" })}
+                icon={null}
+                label="Les deux"
+              />
+            </div>
+
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={value.q}
                 onChange={(e) => onChange({ ...value, q: e.target.value })}
                 onKeyDown={(e) => e.key === "Enter" && onSubmit()}
-                placeholder="Adresse, nom de copro, n° immatriculation…"
+                placeholder={
+                  value.mode === "maisons"
+                    ? "Adresse, n° DPE…"
+                    : "Adresse, nom de copro, n° immatriculation…"
+                }
                 className="pl-9"
               />
             </div>
@@ -173,12 +203,39 @@ export function FiltersBar({
                 Réinitialiser
               </Button>
               <Button size="sm" onClick={onSubmit} className="flex-1">
-                Appliquer ({resultCount})
+                Rechercher ({resultCount})
               </Button>
             </div>
           </div>
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ModeBtn({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold transition-colors",
+        active
+          ? "bg-primary text-primary-foreground shadow-sm"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }

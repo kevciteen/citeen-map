@@ -27,6 +27,14 @@ export type CoproPoint = {
   classe_finale?: string | null;
 };
 
+export type MaisonPoint = {
+  numero_dpe: string;
+  lat: number;
+  lon: number;
+  classe: string;
+  address: string;
+};
+
 export type MapBounds = {
   minLat: number;
   maxLat: number;
@@ -42,12 +50,16 @@ const BASE_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 export function MapView({
   points,
+  maisons = [],
   flyTo,
   onBoundsChange,
   onSelectCopro,
+  onSelectMaison,
   selectedId,
 }: {
   points: CoproPoint[];
+  maisons?: MaisonPoint[];
+  onSelectMaison?: (numeroDpe: string) => void;
   flyTo?: { lat: number; lon: number; zoom?: number } | null;
   onBoundsChange?: (b: MapBounds) => void;
   onSelectCopro: (id: number) => void;
@@ -215,11 +227,102 @@ export function MapView({
         },
       });
 
+      /* ===== Source + layers MAISONS — marker distinct des copros =====
+         Pour différencier visuellement :
+         - Copros = cercle (halo DPE + dot)
+         - Maisons = carré (square via symbol layer avec icône générée) entouré
+           de la couleur DPE pour rester lisible. */
+      map.addSource("maisons", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+        cluster: false, // pas de cluster pour les maisons — déjà filtrées par CP/commune
+      });
+
+      // Halo carré coloré (rotation 45° d'un cercle MapLibre n'existe pas →
+      // on simule un losange avec une grande stroke et zéro fill)
+      map.addLayer({
+        id: "maison-halo",
+        type: "circle",
+        source: "maisons",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 5, 16, 12],
+          "circle-color": [
+            "match",
+            ["coalesce", ["get", "dpe"], "NC"],
+            "A", DPE_COLORS.A,
+            "B", DPE_COLORS.B,
+            "C", DPE_COLORS.C,
+            "D", DPE_COLORS.D,
+            "E", DPE_COLORS.E,
+            "F", DPE_COLORS.F,
+            "G", DPE_COLORS.G,
+            DPE_COLORS.NC,
+          ],
+          "circle-opacity": 0.18,
+          // Stroke distinctif pour différencier des copros (qui ont une stroke blanche fine)
+          "circle-stroke-color": "#1f2937",
+          "circle-stroke-width": 2,
+          "circle-stroke-opacity": 0.6,
+        },
+      });
+
+      map.addLayer({
+        id: "maison-dot",
+        type: "circle",
+        source: "maisons",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 16, 8],
+          "circle-color": [
+            "match",
+            ["coalesce", ["get", "dpe"], "NC"],
+            "A", DPE_COLORS.A,
+            "B", DPE_COLORS.B,
+            "C", DPE_COLORS.C,
+            "D", DPE_COLORS.D,
+            "E", DPE_COLORS.E,
+            "F", DPE_COLORS.F,
+            "G", DPE_COLORS.G,
+            DPE_COLORS.NC,
+          ],
+          // Bordure noire épaisse = signature visuelle "maison" (vs copro = bordure blanche fine)
+          "circle-stroke-color": "#111827",
+          "circle-stroke-width": 2,
+        },
+      });
+
+      // Label "M" pour identifier sans ambiguïté
+      map.addLayer({
+        id: "maison-label",
+        type: "symbol",
+        source: "maisons",
+        minzoom: 13,
+        layout: {
+          "text-field": "M",
+          "text-size": 9,
+          "text-font": ["Noto Sans Bold"],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          "text-offset": [0, 0],
+          "text-anchor": "center",
+        },
+        paint: {
+          "text-color": "#ffffff",
+          "text-halo-color": "#111827",
+          "text-halo-width": 1,
+        },
+      });
+
       map.on("click", "copro-dot", (e) => {
         const f = e.features?.[0] as MapGeoJSONFeature | undefined;
         const id = f?.properties?.id;
         if (typeof id === "number") onSelectCopro(id);
         else if (id) onSelectCopro(Number(id));
+      });
+
+      map.on("click", "maison-dot", (e) => {
+        const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+        const numero = f?.properties?.numero_dpe;
+        if (typeof numero === "string" && onSelectMaison) onSelectMaison(numero);
       });
 
       map.on("click", "clusters", (e) => {
@@ -235,6 +338,8 @@ export function MapView({
 
       map.on("mouseenter", "copro-dot", () => (map.getCanvas().style.cursor = "pointer"));
       map.on("mouseleave", "copro-dot", () => (map.getCanvas().style.cursor = ""));
+      map.on("mouseenter", "maison-dot", () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", "maison-dot", () => (map.getCanvas().style.cursor = ""));
       map.on("mouseenter", "clusters", () => (map.getCanvas().style.cursor = "pointer"));
       map.on("mouseleave", "clusters", () => (map.getCanvas().style.cursor = ""));
 
@@ -263,7 +368,7 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update source data
+  // Update copros source data + auto-fit
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
@@ -284,7 +389,38 @@ export function MapView({
         },
       })),
     });
+    if (points.length > 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      for (const p of points) bounds.extend([p.lon, p.lat]);
+      map.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 600 });
+    }
   }, [points, ready]);
+
+  // Update maisons source data + auto-fit si on a uniquement des maisons
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource("maisons") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    src.setData({
+      type: "FeatureCollection",
+      features: maisons.map((m) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [m.lon, m.lat] },
+        properties: {
+          numero_dpe: m.numero_dpe,
+          dpe: m.classe,
+          address: m.address,
+        },
+      })),
+    });
+    // Auto-fit si on a des maisons mais pas de copros (sinon le fit copros gère)
+    if (maisons.length > 0 && points.length === 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      for (const m of maisons) bounds.extend([m.lon, m.lat]);
+      map.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 600 });
+    }
+  }, [maisons, points.length, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

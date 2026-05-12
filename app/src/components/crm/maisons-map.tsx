@@ -76,9 +76,8 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const [ready, setReady] = useState(false);
-  const [status, setStatus] = useState<string>("init…");
   const [selected, setSelected] = useState<MaisonDpe | null>(null);
-  const [sheetTrigger, setSheetTrigger] = useState(0); // to re-open sheet
+  const [sheetTrigger, setSheetTrigger] = useState(0);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -97,10 +96,8 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       if (cancelled || mapRef.current) return;
       const w = container.clientWidth;
       const h = container.clientHeight;
-      setStatus(`container ${w}×${h}`);
-      if (w < 10 || h < 10) return; // pas encore prêt — on ré‑essaiera via ResizeObserver
+      if (w < 10 || h < 10) return;
 
-      setStatus(`init map ${w}×${h}`);
       const m = new maplibregl.Map({
         container,
         style: "https://tiles.openfreemap.org/styles/liberty",
@@ -113,29 +110,11 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       timers = [50, 200, 500, 1000].map((d) => window.setTimeout(safeResize, d));
 
       m.on("error", (e) => {
-        const msg = e?.error?.message ?? "unknown error";
-        setStatus(`map error: ${msg.slice(0, 80)}`);
         // eslint-disable-next-line no-console
         console.error("[MaisonsMap] map error", e);
       });
 
-      let dataLoadCount = 0;
-      m.on("sourcedata", (e) => {
-        if (e.isSourceLoaded && e.sourceId === "openmaptiles") dataLoadCount++;
-      });
-
-      m.on("idle", () => {
-        const c = m.getCanvas();
-        const z = m.getZoom().toFixed(1);
-        const center = m.getCenter();
-        setStatus(
-          `idle · ${c.width}×${c.height} · tiles=${dataLoadCount} · z=${z} @${center.lng.toFixed(2)},${center.lat.toFixed(2)}`,
-        );
-      });
-
       m.on("load", () => {
-        setStatus("style loaded");
-
         m.addSource("maisons", {
           type: "geojson",
           data: { type: "FeatureCollection", features: [] },
@@ -275,7 +254,6 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
           address: m.address.label,
         },
       }));
-    setStatus((s) => `${s} · feats=${features.length}`);
     src.setData({ type: "FeatureCollection", features });
 
     // Auto-fit on first load
