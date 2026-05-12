@@ -18,7 +18,7 @@ import {
   Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CiteenLogo } from "@/components/layout/citeen-logo";
+import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
 
 type Me = { id: number; email: string; role: "admin" | "member"; name: string | null };
 
@@ -53,11 +53,10 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-border bg-card">
-      <div className="flex h-16 items-center gap-2.5 border-b border-border px-4">
-        <CiteenLogo size={32} />
-        <div className="flex flex-1 flex-col leading-tight">
-          <span className="text-base font-black tracking-tight">Citeen</span>
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="flex h-16 items-center border-b border-border px-4">
+        <div className="flex flex-1 flex-col items-start leading-tight">
+          <CiteenLogoWordmark height={32} />
+          <span className="ml-1 mt-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">
             CRM Prospection
           </span>
         </div>

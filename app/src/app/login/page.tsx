@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { LogIn, Loader2, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { CiteenLogo } from "@/components/layout/citeen-logo";
+import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,12 +45,9 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/30 p-6">
       <div className="w-full max-w-md">
-        <div className="mb-6 flex items-center gap-3">
-          <CiteenLogo size={48} />
-          <div>
-            <h1 className="text-2xl font-black tracking-tight">Citeen</h1>
-            <p className="text-xs text-muted-foreground">CRM Prospection — Connexion</p>
-          </div>
+        <div className="mb-6 flex flex-col items-center gap-2">
+          <CiteenLogoWordmark height={56} />
+          <p className="text-xs text-muted-foreground">CRM Prospection — Connexion</p>
         </div>
 
         <form
