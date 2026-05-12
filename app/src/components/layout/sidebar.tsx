@@ -17,6 +17,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "@/components/collab/notification-bell";
 
 type Me = { id: number; email: string; role: "admin" | "member"; name: string | null };
 
@@ -50,16 +51,17 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-border bg-card">
-      <div className="flex h-16 items-center gap-2 border-b border-border px-5">
+      <div className="flex h-16 items-center gap-2 border-b border-border px-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <span className="text-lg font-black">C</span>
         </div>
-        <div className="flex flex-col leading-tight">
+        <div className="flex flex-1 flex-col leading-tight">
           <span className="text-sm font-bold tracking-tight">Citeen</span>
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
             CRM Prospection
           </span>
         </div>
+        <NotificationBell />
       </div>
 
       <div className="px-3 pt-4">

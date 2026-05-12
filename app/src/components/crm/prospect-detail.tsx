@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CommentsThread } from "@/components/collab/comments-thread";
 import {
   PIPELINE_ORDER,
   stageMeta,
@@ -301,6 +302,9 @@ export function ProspectDetail({
             </ul>
           </CardContent>
         </Card>
+
+        {/* Commentaires + @mentions équipe */}
+        <CommentsThread entityType="prospect" entityId={String(id)} />
       </div>
 
       {/* Side column */}
