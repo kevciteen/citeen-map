@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Building2,
   Search,
@@ -92,11 +93,14 @@ const SORT_OPTIONS = [
 const PAGE_SIZE = 50;
 
 export function CoprosBrowser({ totalInDb }: { totalInDb: number }) {
-  const [q, setQ] = useState("");
-  const [dept, setDept] = useState("");
-  const [cp, setCp] = useState("");
-  const [syndic, setSyndic] = useState("");
-  const [dpe, setDpe] = useState("");
+  // Permet d'arriver pré-filtré via ?syndic=... ?cp=... ?dept=... ?dpe=...
+  // depuis la fiche syndic ou n'importe quel autre point d'entrée.
+  const searchParams = useSearchParams();
+  const [q, setQ] = useState(() => searchParams.get("q") ?? "");
+  const [dept, setDept] = useState(() => searchParams.get("dept") ?? "");
+  const [cp, setCp] = useState(() => searchParams.get("cp") ?? "");
+  const [syndic, setSyndic] = useState(() => searchParams.get("syndic") ?? "");
+  const [dpe, setDpe] = useState(() => searchParams.get("dpe") ?? "");
   const [minLots, setMinLots] = useState("");
   const [maxLots, setMaxLots] = useState("");
   const [periode, setPeriode] = useState("");

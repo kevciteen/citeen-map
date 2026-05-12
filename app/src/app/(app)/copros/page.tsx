@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Topbar } from "@/components/layout/topbar";
 import { CoprosBrowser } from "@/components/crm/copros-browser";
 import { db } from "@/lib/db/client";
@@ -15,7 +16,10 @@ export default async function CoprosPage() {
         subtitle={`${total.toLocaleString("fr-FR")} immeubles en base — registre national IDF`}
       />
       <div className="flex-1 overflow-hidden bg-secondary/30">
-        <CoprosBrowser totalInDb={total} />
+        {/* Suspense requis pour useSearchParams côté client (Next 16) */}
+        <Suspense fallback={null}>
+          <CoprosBrowser totalInDb={total} />
+        </Suspense>
       </div>
     </div>
   );
