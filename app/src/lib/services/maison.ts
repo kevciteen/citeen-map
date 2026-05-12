@@ -481,12 +481,51 @@ export type MaisonsZoneFilters = {
   size?: number;             // taille de la fenêtre ADEME (max 10000)
 };
 
+async function resolveCommuneInsee(commune: string): Promise<{
+  inseeCode: string | null;
+  canonicalName: string | null;
+}> {
+  try {
+    const url = new URL("https://api-adresse.data.gouv.fr/search/");
+    url.searchParams.set("q", commune);
+    url.searchParams.set("type", "municipality");
+    url.searchParams.set("limit", "1");
+    const res = await fetch(url, {
+      headers: { accept: "application/json" },
+      next: { revalidate: 86400 },
+    });
+    if (!res.ok) return { inseeCode: null, canonicalName: null };
+    const json = (await res.json()) as {
+      features?: Array<{ properties?: { citycode?: string; city?: string; label?: string } }>;
+    };
+    const f = json.features?.[0]?.properties;
+    return {
+      inseeCode: f?.citycode ?? null,
+      canonicalName: f?.city ?? f?.label ?? null,
+    };
+  } catch {
+    return { inseeCode: null, canonicalName: null };
+  }
+}
+
 export async function searchMaisonsByZone(
   f: MaisonsZoneFilters,
 ): Promise<{ total: number; items: MaisonDpe[] }> {
   const params: string[] = [];
   if (f.cp) params.push(`code_postal_ban:"${f.cp}"`);
-  if (f.commune) params.push(`nom_commune_ban:"${f.commune}"`);
+  if (f.commune) {
+    // ADEME exige une correspondance exacte (Elasticsearch case-sensitive).
+    // On résout d'abord la commune via BAN pour récupérer le code INSEE,
+    // qui est plus fiable que le nom (gère casse, accents, tirets).
+    const resolved = await resolveCommuneInsee(f.commune);
+    if (resolved.inseeCode) {
+      params.push(`code_insee_ban:"${resolved.inseeCode}"`);
+    } else if (resolved.canonicalName) {
+      params.push(`nom_commune_ban:"${resolved.canonicalName}"`);
+    } else {
+      params.push(`nom_commune_ban:"${f.commune}"`);
+    }
+  }
   // On limite au type maison côté ADEME (plus rapide que filtrer après)
   params.push(`type_batiment:"maison"`);
 

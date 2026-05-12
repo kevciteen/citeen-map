@@ -176,7 +176,7 @@ export function MaisonsAddressSearch() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-6">
+    <div className="mx-auto h-full max-w-4xl space-y-4 overflow-y-auto p-6">
       {/* Search bar */}
       <Card>
         <CardContent className="p-5">

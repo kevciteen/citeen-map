@@ -20,7 +20,7 @@ export function MaisonsModule() {
           Recherche par zone (CP / commune)
         </TabBtn>
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-hidden">
         {tab === "address" ? <MaisonsAddressSearch /> : <MaisonsZoneSearch />}
       </div>
     </div>
