@@ -2,18 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import type { InValue } from "@libsql/client";
 import { z } from "zod";
+import { ensureProspectExtras } from "@/lib/db/ensure-prospect-extras";
 
 export const runtime = "nodejs";
 
+const STAGE_VALUES = [
+  "lead",
+  "to_contact",
+  "contacted",
+  "meeting",
+  "proposal",
+  "audit",
+  "ag_vote",
+  "won",
+  "lost",
+] as const;
+
 const updateSchema = z.object({
-  stage: z
-    .enum(["lead", "to_contact", "contacted", "meeting", "proposal", "won", "lost"])
-    .optional(),
+  stage: z.enum(STAGE_VALUES).optional(),
   priority: z.number().int().min(1).max(3).optional(),
   estimatedValue: z.number().nullable().optional(),
   nextActionAt: z.number().nullable().optional(),
   nextActionLabel: z.string().nullable().optional(),
   assignedTo: z.string().nullable().optional(),
+  assignedUserId: z.number().int().positive().nullable().optional(),
+  wonReason: z.string().nullable().optional(),
+  lostReason: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
 });
 
@@ -51,6 +65,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  await ensureProspectExtras();
   const { id } = await params;
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });
@@ -85,6 +100,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (d.assignedTo !== undefined) {
     sets.push("assigned_to = ?");
     vals.push(d.assignedTo);
+  }
+  if (d.assignedUserId !== undefined) {
+    sets.push("assigned_user_id = ?");
+    vals.push(d.assignedUserId);
+  }
+  if (d.wonReason !== undefined) {
+    sets.push("won_reason = ?");
+    vals.push(d.wonReason);
+  }
+  if (d.lostReason !== undefined) {
+    sets.push("lost_reason = ?");
+    vals.push(d.lostReason);
   }
   if (d.tags !== undefined) {
     sets.push("tags = ?");

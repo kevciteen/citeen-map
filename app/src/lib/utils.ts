@@ -5,14 +5,19 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Pipeline adapté au cycle rénovation copro :
+// audit + ag_vote insérés entre proposal et won car c'est là que les deals
+// copro stagnent 3-6 mois (audit énergétique → présentation en AG → vote).
 const PIPELINE_STAGES = {
   lead: { label: "Lead", color: "#94a3b8", order: 0 },
   to_contact: { label: "À contacter", color: "#3b82f6", order: 1 },
   contacted: { label: "Contacté", color: "#8b5cf6", order: 2 },
   meeting: { label: "RDV", color: "#f59e0b", order: 3 },
   proposal: { label: "Proposition", color: "#06b6d4", order: 4 },
-  won: { label: "Signé", color: "#10b981", order: 5 },
-  lost: { label: "Perdu", color: "#ef4444", order: 6 },
+  audit: { label: "Audit énergétique", color: "#a855f7", order: 5 },
+  ag_vote: { label: "AG vote", color: "#f97316", order: 6 },
+  won: { label: "Signé", color: "#10b981", order: 7 },
+  lost: { label: "Perdu", color: "#ef4444", order: 8 },
 } as const;
 
 export type PipelineStageKey = keyof typeof PIPELINE_STAGES;
@@ -27,6 +32,8 @@ export const PIPELINE_ORDER: PipelineStageKey[] = [
   "contacted",
   "meeting",
   "proposal",
+  "audit",
+  "ag_vote",
   "won",
   "lost",
 ];

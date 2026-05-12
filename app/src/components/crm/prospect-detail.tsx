@@ -354,6 +354,32 @@ export function ProspectDetail({
               </Select>
             </div>
 
+            {/* Assignation à un user (Phase C) */}
+            <AssignmentPicker
+              currentUserId={prospect.assigned_user_id ?? null}
+              currentName={prospect.assigned_user_name ?? prospect.assigned_user_email ?? null}
+              onChange={(uid) => updateField({ assignedUserId: uid })}
+            />
+
+            {/* Raison gain/perte selon le stage */}
+            {prospect.stage === "won" || prospect.stage === "lost" ? (
+              <WinLossReason
+                stage={prospect.stage}
+                value={
+                  prospect.stage === "won"
+                    ? (prospect.won_reason ?? "")
+                    : (prospect.lost_reason ?? "")
+                }
+                onChange={(v) =>
+                  updateField(
+                    prospect.stage === "won"
+                      ? { wonReason: v }
+                      : { lostReason: v },
+                  )
+                }
+              />
+            ) : null}
+
             <div>
               <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 Valeur estimée (€)
@@ -475,3 +501,113 @@ function labelForActivity(type: string): string {
 }
 
 void MessageSquare;
+
+/* ===== Phase C : assignation à un user + raison gain/perte ===== */
+
+function AssignmentPicker({
+  currentUserId,
+  currentName,
+  onChange,
+}: {
+  currentUserId: number | null;
+  currentName: string | null;
+  onChange: (userId: number | null) => void;
+}) {
+  const [users, setUsers] = useState<{ id: number; email: string; name: string | null }[]>([]);
+  useEffect(() => {
+    fetch("/api/users/mention-search?limit=50")
+      .then((r) => r.json())
+      .then((j) => setUsers(j.items ?? []))
+      .catch(() => setUsers([]));
+  }, []);
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Assigné à
+      </label>
+      <Select
+        value={currentUserId ? String(currentUserId) : "_unassigned"}
+        onValueChange={(v) => onChange(v === "_unassigned" ? null : Number(v))}
+      >
+        <SelectTrigger>
+          <SelectValue>
+            {currentName ?? "Non assigné"}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_unassigned">Non assigné</SelectItem>
+          {users.map((u) => (
+            <SelectItem key={u.id} value={String(u.id)}>
+              {u.name ?? u.email}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+const LOST_REASONS = [
+  "Trop cher",
+  "Déjà engagé avec concurrent",
+  "Pas le bon moment / report AG",
+  "Pas de quorum / refus AG",
+  "Pas de budget",
+  "Autre",
+];
+const WON_REASONS = [
+  "MaPrimeRénov' Copro déclencheur",
+  "Audit préalable convaincant",
+  "Recommandation tiers",
+  "Levée passoire DPE F/G",
+  "Autre",
+];
+
+function WinLossReason({
+  stage,
+  value,
+  onChange,
+}: {
+  stage: "won" | "lost";
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const options = stage === "won" ? WON_REASONS : LOST_REASONS;
+  const label = stage === "won" ? "Raison du gain" : "Raison de la perte";
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
+      <Select
+        value={options.includes(value) ? value : "_custom"}
+        onValueChange={(v) => {
+          if (v === "_custom") return;
+          onChange(v);
+        }}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Sélectionner…" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (
+            <SelectItem key={o} value={o}>
+              {o}
+            </SelectItem>
+          ))}
+          <SelectItem value="_custom">Autre (saisie libre ↓)</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={
+          stage === "won"
+            ? "Détaille la raison du gain pour ton équipe"
+            : "Détaille la raison de la perte"
+        }
+        className="mt-1"
+      />
+    </div>
+  );
+}

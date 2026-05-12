@@ -15,6 +15,7 @@ import {
   Shield,
   LogOut,
   KeyRound,
+  Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/collab/notification-bell";
@@ -22,6 +23,7 @@ import { NotificationBell } from "@/components/collab/notification-bell";
 type Me = { id: number; email: string; role: "admin" | "member"; name: string | null };
 
 const items = [
+  { href: "/today", label: "Aujourd'hui", icon: Sun },
   { href: "/dashboard", label: "Vue d'ensemble", icon: LayoutDashboard },
   { href: "/map", label: "Carte prospection", icon: MapIcon },
   { href: "/prospects", label: "Pipeline", icon: Kanban },

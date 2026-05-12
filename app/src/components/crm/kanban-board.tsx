@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Building2, Calendar, MapPin, AlertCircle } from "lucide-react";
+import { Building2, Calendar, MapPin, AlertCircle, User, Users } from "lucide-react";
 import { PIPELINE_ORDER, stageMeta, formatCurrency, type PipelineStageKey } from "@/lib/utils";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { toast } from "sonner";
@@ -18,6 +18,9 @@ type ProspectRow = {
   next_action_at: number | null;
   next_action_label: string | null;
   assigned_to: string | null;
+  assigned_user_id: number | null;
+  assigned_user_name: string | null;
+  assigned_user_email: string | null;
   tags: string | null;
   nom_copro: string | null;
   adresse: string | null;
@@ -31,10 +34,12 @@ export function KanbanBoard() {
   const [rows, setRows] = useState<ProspectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState<number | null>(null);
+  const [mineOnly, setMineOnly] = useState(false);
 
   const load = async () => {
     setLoading(true);
-    const r = await fetch("/api/prospects");
+    const url = mineOnly ? "/api/prospects?mine=1" : "/api/prospects";
+    const r = await fetch(url);
     const j = await r.json();
     setRows(j.items ?? []);
     setLoading(false);
@@ -42,7 +47,8 @@ export function KanbanBoard() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mineOnly]);
 
   const onDragStart = (id: number) => setDragId(id);
   const onDragEnd = () => setDragId(null);
@@ -67,8 +73,51 @@ export function KanbanBoard() {
     items: rows.filter((r) => r.stage === s),
   }));
 
+  const totalPipeline = rows
+    .filter((r) => r.stage !== "won" && r.stage !== "lost")
+    .reduce((s, x) => s + (x.estimated_value ?? 0), 0);
+
   return (
     <div className="flex h-full flex-col">
+      {/* Toolbar : filtre "mes prospects" + total pipeline */}
+      <div className="flex items-center justify-between gap-3 border-b border-border bg-card/30 px-4 py-2 text-xs">
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+          <button
+            onClick={() => setMineOnly(false)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-semibold transition-colors",
+              !mineOnly
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-secondary",
+            )}
+          >
+            <Users className="h-3 w-3" />
+            Toute l&apos;équipe
+          </button>
+          <button
+            onClick={() => setMineOnly(true)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-semibold transition-colors",
+              mineOnly
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-secondary",
+            )}
+          >
+            <User className="h-3 w-3" />
+            Mes prospects
+          </button>
+        </div>
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <span>
+            <strong className="text-foreground">{rows.length}</strong> prospects affichés
+          </span>
+          <span>·</span>
+          <span>
+            Pipeline ouvert :{" "}
+            <strong className="text-emerald-700">{formatCurrency(totalPipeline)}</strong>
+          </span>
+        </div>
+      </div>
       <div className="flex h-full gap-3 overflow-x-auto p-4">
         {grouped.map(({ stage, items }) => {
           const meta = stageMeta(stage);
