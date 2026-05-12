@@ -11,6 +11,7 @@ import { AddressSearch } from "@/components/map/address-search";
 import { CoproPanel } from "@/components/map/copro-panel";
 import { MaisonDetailSheet } from "@/components/crm/maison-detail-sheet";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 // On garde une référence aux derniers items maisons pour résoudre le clic carte.
 type MaisonFull = MaisonPoint & {
@@ -119,12 +120,15 @@ export default function MapPage() {
       }
 
       if (wantsMaisons) {
-        // Pour les maisons on doit fournir CP ou commune (extrait du q si possible)
+        // Champ dédié commune > détection du q comme CP > q comme commune
         const sp = new URLSearchParams();
-        if (f.cp) sp.set("cp", f.cp);
-        // Si q ressemble à un CP, on l'utilise comme tel
-        if (!f.cp && /^\d{5}$/.test(f.q.trim())) sp.set("cp", f.q.trim());
-        else if (f.q) sp.set("commune", f.q.trim());
+        const cp = f.cp.trim();
+        const commune = f.commune.trim();
+        const qIsLikelyCp = /^\d{5}$/.test(f.q.trim());
+        if (cp) sp.set("cp", cp);
+        else if (qIsLikelyCp) sp.set("cp", f.q.trim());
+        if (commune) sp.set("commune", commune);
+        else if (!cp && !qIsLikelyCp && f.q.trim()) sp.set("commune", f.q.trim());
         if (f.dpeClasses.length) sp.set("dpe", f.dpeClasses.join(","));
         sp.set("limit", "500");
 
@@ -151,6 +155,10 @@ export default function MapPage() {
               }),
           );
         } else {
+          // Maisons demandées mais ni CP ni commune → on indique pourquoi rien ne s'affiche
+          toast.info(
+            "Pour afficher les maisons, indique un code postal ou une commune",
+          );
           setMaisons([]);
           setMaisonsCount(0);
         }

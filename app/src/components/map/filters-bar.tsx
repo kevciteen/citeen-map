@@ -22,6 +22,7 @@ const PERIODES = [
 export type MapFilters = {
   q: string;
   cp: string;
+  commune: string;
   syndic: string;
   dept: string;
   dpeClasses: string[];
@@ -33,6 +34,7 @@ export type MapFilters = {
 export const DEFAULT_FILTERS: MapFilters = {
   q: "",
   cp: "",
+  commune: "",
   syndic: "",
   dept: "",
   dpeClasses: [],
@@ -138,11 +140,23 @@ export function FiltersBar({
               </select>
             </div>
 
-            <Input
-              value={value.syndic}
-              onChange={(e) => onChange({ ...value, syndic: e.target.value })}
-              placeholder="Syndic / gestionnaire"
-            />
+            {/* Commune : utile pour maisons (résolu via BAN/INSEE) */}
+            {value.mode !== "copros" ? (
+              <Input
+                value={value.commune}
+                onChange={(e) => onChange({ ...value, commune: e.target.value })}
+                placeholder="Commune (ex. Romainville, Paris 11e…)"
+              />
+            ) : null}
+
+            {/* Syndic : copros uniquement */}
+            {value.mode !== "maisons" ? (
+              <Input
+                value={value.syndic}
+                onChange={(e) => onChange({ ...value, syndic: e.target.value })}
+                placeholder="Syndic / gestionnaire"
+              />
+            ) : null}
 
             <div>
               <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -170,32 +184,44 @@ export function FiltersBar({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                type="number"
-                min={0}
-                value={value.minLots ?? ""}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    minLots: e.target.value === "" ? null : Number(e.target.value),
-                  })
-                }
-                placeholder="Lots min."
-              />
-              <select
-                value={value.periode}
-                onChange={(e) => onChange({ ...value, periode: e.target.value })}
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-              >
-                <option value="">Période</option>
-                {PERIODES.map((p) => (
-                  <option key={p} value={p}>
-                    {p.replace(/_/g, " ").replace("AVANT", "<").replace("APRES", ">")}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Lots min + Période : copros uniquement */}
+            {value.mode !== "maisons" ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  value={value.minLots ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      ...value,
+                      minLots: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                  placeholder="Lots min."
+                />
+                <select
+                  value={value.periode}
+                  onChange={(e) => onChange({ ...value, periode: e.target.value })}
+                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">Période</option>
+                  {PERIODES.map((p) => (
+                    <option key={p} value={p}>
+                      {p.replace(/_/g, " ").replace("AVANT", "<").replace("APRES", ">")}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {/* Mini-aide selon mode pour clarifier ce qu'on cherche */}
+            {value.mode !== "copros" ? (
+              <p className="rounded-md bg-blue-50 px-2 py-1.5 text-[11px] text-blue-900">
+                💡 Pour les maisons, indique un <strong>code postal</strong> ou
+                une <strong>commune</strong> (les maisons ne se cherchent pas par
+                bbox carte — il faut un périmètre).
+              </p>
+            ) : null}
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <Button variant="ghost" size="sm" onClick={onReset}>
