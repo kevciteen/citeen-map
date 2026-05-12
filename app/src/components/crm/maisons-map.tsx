@@ -295,6 +295,12 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
         map: {status} · ready={String(ready)} · items={items.length}
       </div>
 
+      {/* DEBUG: rectangle rouge HTML positionné au milieu — confirme si l'espace
+          du map container est visible (test non-WebGL). À retirer après diag. */}
+      <div className="pointer-events-none absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded bg-red-600 px-4 py-2 font-bold text-white shadow-2xl">
+        TEST RECTANGLE — si visible, layout OK, souci = WebGL
+      </div>
+
       {/* DPE color legend */}
       <div className="absolute left-3 top-3 z-10 rounded-lg border border-border bg-card/95 p-2 shadow backdrop-blur">
         <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
