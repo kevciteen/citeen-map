@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Copy,
   ExternalLink,
+  IdCard,
   Loader2,
   Mail,
   MapPin,
@@ -10,6 +12,17 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+
+function slugify(name: string): string {
+  return name
+    .trim()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
 
 type SyndicContact = {
   source: string;
@@ -103,17 +116,27 @@ export function SyndicContactCard({
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
         <p className="font-semibold">Pas de fiche entreprise trouvée</p>
-        <p className="mt-1 opacity-80">{error ?? "Le nom du syndic ne match aucune entreprise active."}</p>
-        <a
-          href={`https://www.google.com/search?q=${encodeURIComponent(
-            `${syndicName} syndic adresse contact`,
-          )}`}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-2 inline-flex items-center gap-1 font-medium text-amber-800 underline hover:text-amber-700"
-        >
-          <Search className="h-3 w-3" /> Rechercher sur Google
-        </a>
+        <p className="mt-1 opacity-80">
+          {error ?? "Le nom du syndic ne match aucune entreprise active."}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Link
+            href={`/syndics/${slugify(syndicName)}?name=${encodeURIComponent(syndicName)}`}
+            className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+          >
+            <IdCard className="h-3 w-3" /> Ouvrir la fiche
+          </Link>
+          <a
+            href={`https://www.google.com/search?q=${encodeURIComponent(
+              `${syndicName} syndic adresse contact`,
+            )}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 font-medium text-amber-800 underline hover:text-amber-700"
+          >
+            <Search className="h-3 w-3" /> Rechercher sur Google
+          </a>
+        </div>
       </div>
     );
   }
@@ -160,6 +183,12 @@ export function SyndicContactCard({
       ) : null}
 
       <div className="flex flex-wrap gap-1.5 pt-1">
+        <Link
+          href={`/syndics/${slugify(syndicName)}?name=${encodeURIComponent(syndicName)}`}
+          className="flex items-center gap-1 rounded-md bg-emerald-700 px-2 py-1 text-[11px] font-bold text-white hover:bg-emerald-800"
+        >
+          <IdCard className="h-3 w-3" /> Ouvrir la fiche
+        </Link>
         <a
           href={`mailto:?subject=${mailtoSubject}&body=${mailtoBody}`}
           className="flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-900 hover:bg-emerald-100"

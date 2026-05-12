@@ -207,9 +207,24 @@ export function SyndicsBrowser({ totalInDb }: { totalInDb: number }) {
   );
 }
 
+function slugifyForLink(name: string): string {
+  return name
+    .trim()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
 function SyndicCard({ syndic: s }: { syndic: Row }) {
   const totalDpe = s.dpe_a + s.dpe_b + s.dpe_c + s.dpe_d + s.dpe_e + s.dpe_f + s.dpe_g;
   const pipelinePct = s.nb_copros > 0 ? (s.in_pipeline / s.nb_copros) * 100 : 0;
+  const syndicSlug = slugifyForLink(s.syndic);
+  // Le titre va sur la fiche syndic dédiée ; le bouton "voir copros" garde
+  // l'ancien comportement (filtre sur la liste copros).
+  const detailUrl = `/syndics/${syndicSlug}?name=${encodeURIComponent(s.syndic)}`;
   const filterUrl = `/copros?syndic=${encodeURIComponent(s.syndic)}`;
   const exportUrl = `/api/export/copros-by-filter.xlsx?syndic=${encodeURIComponent(s.syndic)}`;
 
@@ -222,9 +237,9 @@ function SyndicCard({ syndic: s }: { syndic: Row }) {
           </div>
           <div className="min-w-0 flex-1">
             <Link
-              href={filterUrl}
+              href={detailUrl}
               className="block truncate text-sm font-bold leading-tight hover:text-primary"
-              title={s.syndic}
+              title={`Ouvrir la fiche ${s.syndic}`}
             >
               {s.syndic}
             </Link>
@@ -302,11 +317,19 @@ function SyndicCard({ syndic: s }: { syndic: Row }) {
 
       <div className="flex items-center gap-1 border-t border-border bg-secondary/30 p-2">
         <Link
-          href={filterUrl}
+          href={detailUrl}
           className="flex flex-1 items-center justify-center gap-1 rounded-md bg-primary px-2 py-1.5 text-[11px] font-bold text-primary-foreground hover:bg-primary/90"
         >
+          <Users className="h-3 w-3" />
+          Fiche syndic
+        </Link>
+        <Link
+          href={filterUrl}
+          className="flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-medium hover:bg-secondary"
+          title="Filtrer les copros gérées par ce syndic"
+        >
           <Building2 className="h-3 w-3" />
-          Voir les copros
+          Copros
         </Link>
         <a
           href={exportUrl}
