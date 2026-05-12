@@ -125,10 +125,11 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       });
 
       m.on("idle", () => {
-        // Une fois le render terminé on inspecte le DOM canvas pour confirmer
         const c = m.getCanvas();
+        const z = m.getZoom().toFixed(1);
+        const center = m.getCenter();
         setStatus(
-          `idle · canvas ${c.width}×${c.height} · tiles=${dataLoadCount}`,
+          `idle · ${c.width}×${c.height} · tiles=${dataLoadCount} · z=${z} @${center.lng.toFixed(2)},${center.lat.toFixed(2)}`,
         );
       });
 
@@ -273,6 +274,7 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
           address: m.address.label,
         },
       }));
+    setStatus((s) => `${s} · feats=${features.length}`);
     src.setData({ type: "FeatureCollection", features });
 
     // Auto-fit on first load
