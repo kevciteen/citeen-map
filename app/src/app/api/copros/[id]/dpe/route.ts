@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { estimateDpeForCopro } from "@/lib/services/dpe";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,6 +20,8 @@ type CoproRow = {
 };
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const coproId = Number(id);
   if (!Number.isFinite(coproId)) {

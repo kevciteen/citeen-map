@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -41,6 +42,8 @@ function esc(v: unknown): string {
 }
 
 export async function GET() {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const rows = await db.all<Record<string, unknown>>(
     `SELECT p.id, p.stage, p.priority, p.estimated_value,
             p.next_action_at, p.next_action_label, p.created_at, p.updated_at,

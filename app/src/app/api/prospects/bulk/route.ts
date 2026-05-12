@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { z } from "zod";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,8 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const body = await req.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

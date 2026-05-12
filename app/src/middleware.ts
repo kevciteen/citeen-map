@@ -21,6 +21,9 @@ const PUBLIC_PATHS = [
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/me",
+  // Cron routes : protégées par CRON_SECRET côté handler (Vercel ajoute
+  // le header Authorization automatiquement), pas par session cookie.
+  "/api/cron",
 ];
 
 function isPublic(pathname: string): boolean {

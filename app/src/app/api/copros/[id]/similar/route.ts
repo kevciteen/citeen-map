@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import type { InValue } from "@libsql/client";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,8 @@ export const runtime = "nodejs";
  * dans le pipeline, pour orienter vers de nouvelles cibles.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const coproId = Number(id);
   if (!Number.isFinite(coproId))

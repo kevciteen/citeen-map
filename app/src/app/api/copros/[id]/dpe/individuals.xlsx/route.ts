@@ -7,11 +7,14 @@ import {
   styleDpeCell,
   freezeAndZebra,
 } from "@/lib/services/excel";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const coproId = Number(id);
   if (!Number.isFinite(coproId))

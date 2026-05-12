@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchMaisonsByZone } from "@/lib/services/maison";
+import { ensureAuth } from "@/lib/auth/guards";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -11,6 +13,10 @@ function num(v: string | null): number | undefined {
 }
 
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
+  const limited = await rateLimit("heavy", `user:${guard.id}`);
+  if (limited) return limited;
   const sp = req.nextUrl.searchParams;
   const cp = sp.get("cp")?.trim();
   const commune = sp.get("commune")?.trim();

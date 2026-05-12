@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser, ensureAdminUser } from "@/lib/auth/users";
 import { getSession } from "@/lib/auth/session";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  // Brute-force protection : 5 tentatives / minute / IP
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    "unknown";
+  const limited = await rateLimit("login", `ip:${ip}`);
+  if (limited) return limited;
   // Garantit que le compte admin est seed (idempotent) avant toute tentative
   try {
     await ensureAdminUser();

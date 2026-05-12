@@ -8,6 +8,7 @@ import {
   freezeAndZebra,
   autoSizeColumns,
 } from "@/lib/services/excel";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,8 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const sp = req.nextUrl.searchParams;
   const ids = sp
     .get("ids")

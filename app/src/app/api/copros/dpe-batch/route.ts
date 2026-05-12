@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { estimateDpeForCopro } from "@/lib/services/dpe";
 import { z } from "zod";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 // Allow long-running batch (Vercel default is 10s, we set higher for local)
@@ -99,6 +100,8 @@ async function runWithConcurrency<T, R>(
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const body = await req.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

@@ -4,6 +4,7 @@ import type { InValue } from "@libsql/client";
 import { z } from "zod";
 import { ensureProspectExtras } from "@/lib/db/ensure-prospect-extras";
 import { getCurrentUser } from "@/lib/auth/session";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,8 @@ const createSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   await ensureProspectExtras();
   const sp = req.nextUrl.searchParams;
   const stage = sp.get("stage");
@@ -76,6 +79,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   await ensureProspectExtras();
   const body = await req.json();
   const parsed = createSchema.safeParse(body);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,8 @@ function esc(v: unknown): string {
 }
 
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const sp = req.nextUrl.searchParams;
   const ids = sp.get("ids")?.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
   if (!ids || ids.length === 0) {

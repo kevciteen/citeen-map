@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveSyndicByName } from "@/lib/services/syndic-contact";
 import { getSyndicRecord } from "@/lib/services/syndic-storage";
 import { slugifySyndic } from "@/lib/db/ensure-syndic-contacts";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -13,6 +14,8 @@ export const maxDuration = 15;
  * remonte automatiquement partout dans le CRM (panel copro, etc.).
  */
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const name = req.nextUrl.searchParams.get("name")?.trim();
   if (!name) {
     return NextResponse.json({ error: "?name= requis" }, { status: 400 });

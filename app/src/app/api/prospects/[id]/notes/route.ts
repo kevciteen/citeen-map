@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { z } from "zod";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
 const schema = z.object({ body: z.string().min(1), author: z.string().optional() });
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });

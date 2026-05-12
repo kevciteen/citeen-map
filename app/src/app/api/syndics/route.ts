@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import type { InValue } from "@libsql/client";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,8 @@ export const runtime = "nodejs";
  *  - % déjà dans le pipeline
  */
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const sp = req.nextUrl.searchParams;
   const q = sp.get("q")?.trim();
   const dept = sp.get("dept")?.trim();

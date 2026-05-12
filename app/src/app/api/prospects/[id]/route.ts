@@ -3,6 +3,7 @@ import { db } from "@/lib/db/client";
 import type { InValue } from "@libsql/client";
 import { z } from "zod";
 import { ensureProspectExtras } from "@/lib/db/ensure-prospect-extras";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,8 @@ const updateSchema = z.object({
 });
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });
@@ -65,6 +68,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   await ensureProspectExtras();
   const { id } = await params;
   const pid = Number(id);
@@ -135,6 +140,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });

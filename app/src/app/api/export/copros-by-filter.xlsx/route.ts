@@ -8,6 +8,7 @@ import {
   styleQualityCell,
   freezeAndZebra,
 } from "@/lib/services/excel";
+import { ensureAuth } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -45,6 +46,8 @@ const STAGE_LABELS: Record<string, string> = {
  * en XLSX premium. Permet d'exporter "tout ce qui matche" sans devoir cocher.
  */
 export async function GET(req: NextRequest) {
+  const guard = await ensureAuth();
+  if (guard instanceof NextResponse) return guard;
   const sp = req.nextUrl.searchParams;
 
   // Re-build the same WHERE clause that /api/copros/list uses
