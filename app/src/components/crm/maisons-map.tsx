@@ -81,128 +81,147 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: "https://tiles.openfreemap.org/styles/liberty",
-      center: [2.3522, 48.8566],
-      zoom: 11,
-    });
-    mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "bottom-right");
-    map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
+    const container = containerRef.current;
+
+    // MapLibre refuse de s'initialiser si le container fait 0×0 — on attend
+    // que le layout flex propage une hauteur réelle avant d'instancier.
+    let cancelled = false;
+    let timers: number[] = [];
 
     const safeResize = () => {
-      try { map.resize(); } catch {}
+      try { mapRef.current?.resize(); } catch {}
     };
-    const ro = new ResizeObserver(safeResize);
-    ro.observe(containerRef.current);
-    window.addEventListener("resize", safeResize);
-    const timers = [50, 200, 500, 1000].map((d) => window.setTimeout(safeResize, d));
 
-    map.on("load", () => {
-      map.addSource("maisons", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-        cluster: true,
-        clusterRadius: 40,
-        clusterMaxZoom: 14,
-      });
-      map.addLayer({
-        id: "clusters",
-        type: "circle",
-        source: "maisons",
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": ["step", ["get", "point_count"], "#3b82f6", 10, "#2563eb", 50, "#1d4ed8"],
-          "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 50, 24],
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
-        },
-      });
-      map.addLayer({
-        id: "cluster-count",
-        type: "symbol",
-        source: "maisons",
-        filter: ["has", "point_count"],
-        layout: {
-          "text-field": ["get", "point_count_abbreviated"],
-          "text-size": 12,
-          "text-font": ["Noto Sans Bold"],
-          "text-allow-overlap": true,
-        },
-        paint: { "text-color": "#ffffff" },
-      });
-      map.addLayer({
-        id: "maison-halo",
-        type: "circle",
-        source: "maisons",
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 6, 18, 16],
-          "circle-color": [
-            "match", ["coalesce", ["get", "dpe"], "NC"],
-            "A", DPE_COLORS.A, "B", DPE_COLORS.B, "C", DPE_COLORS.C, "D", DPE_COLORS.D,
-            "E", DPE_COLORS.E, "F", DPE_COLORS.F, "G", DPE_COLORS.G, DPE_COLORS.NC,
-          ],
-          "circle-opacity": 0.3,
-        },
-      });
-      map.addLayer({
-        id: "maison-dot",
-        type: "circle",
-        source: "maisons",
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 18, 10],
-          "circle-color": [
-            "match", ["coalesce", ["get", "dpe"], "NC"],
-            "A", DPE_COLORS.A, "B", DPE_COLORS.B, "C", DPE_COLORS.C, "D", DPE_COLORS.D,
-            "E", DPE_COLORS.E, "F", DPE_COLORS.F, "G", DPE_COLORS.G, DPE_COLORS.NC,
-          ],
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1.5,
-        },
-      });
+    const tryInit = () => {
+      if (cancelled || mapRef.current) return;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w < 10 || h < 10) return; // pas encore prêt — on ré‑essaiera via ResizeObserver
 
-      map.on("click", "maison-dot", (e) => {
-        const f = e.features?.[0] as MapGeoJSONFeature | undefined;
-        const numero = f?.properties?.numero_dpe;
-        if (typeof numero === "string") {
-          // Find the maison from items
-          const found = (window as unknown as { __maisonsCache?: MaisonDpe[] }).__maisonsCache?.find(
-            (m) => m.numero_dpe === numero,
-          );
-          if (found) {
-            setSelected(found);
-            setSheetTrigger((n) => n + 1);
-          }
-        }
+      const m = new maplibregl.Map({
+        container,
+        style: "https://tiles.openfreemap.org/styles/liberty",
+        center: [2.3522, 48.8566],
+        zoom: 11,
       });
+      mapRef.current = m;
+      m.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "bottom-right");
+      m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
+      timers = [50, 200, 500, 1000].map((d) => window.setTimeout(safeResize, d));
 
-      map.on("click", "clusters", (e) => {
-        const f = e.features?.[0];
-        const clusterId = f?.properties?.cluster_id;
-        if (clusterId == null) return;
-        const src = map.getSource("maisons") as maplibregl.GeoJSONSource;
-        src.getClusterExpansionZoom(clusterId).then((zoom) => {
-          const c = (f!.geometry as GeoJSON.Point).coordinates as [number, number];
-          map.easeTo({ center: c, zoom });
+      m.on("load", () => {
+        m.addSource("maisons", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+          cluster: true,
+          clusterRadius: 40,
+          clusterMaxZoom: 14,
         });
+        m.addLayer({
+          id: "clusters",
+          type: "circle",
+          source: "maisons",
+          filter: ["has", "point_count"],
+          paint: {
+            "circle-color": ["step", ["get", "point_count"], "#3b82f6", 10, "#2563eb", 50, "#1d4ed8"],
+            "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 50, 24],
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 2,
+          },
+        });
+        m.addLayer({
+          id: "cluster-count",
+          type: "symbol",
+          source: "maisons",
+          filter: ["has", "point_count"],
+          layout: {
+            "text-field": ["get", "point_count_abbreviated"],
+            "text-size": 12,
+            "text-font": ["Noto Sans Bold"],
+            "text-allow-overlap": true,
+          },
+          paint: { "text-color": "#ffffff" },
+        });
+        m.addLayer({
+          id: "maison-halo",
+          type: "circle",
+          source: "maisons",
+          filter: ["!", ["has", "point_count"]],
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 6, 18, 16],
+            "circle-color": [
+              "match", ["coalesce", ["get", "dpe"], "NC"],
+              "A", DPE_COLORS.A, "B", DPE_COLORS.B, "C", DPE_COLORS.C, "D", DPE_COLORS.D,
+              "E", DPE_COLORS.E, "F", DPE_COLORS.F, "G", DPE_COLORS.G, DPE_COLORS.NC,
+            ],
+            "circle-opacity": 0.3,
+          },
+        });
+        m.addLayer({
+          id: "maison-dot",
+          type: "circle",
+          source: "maisons",
+          filter: ["!", ["has", "point_count"]],
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 18, 10],
+            "circle-color": [
+              "match", ["coalesce", ["get", "dpe"], "NC"],
+              "A", DPE_COLORS.A, "B", DPE_COLORS.B, "C", DPE_COLORS.C, "D", DPE_COLORS.D,
+              "E", DPE_COLORS.E, "F", DPE_COLORS.F, "G", DPE_COLORS.G, DPE_COLORS.NC,
+            ],
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 1.5,
+          },
+        });
+
+        m.on("click", "maison-dot", (e) => {
+          const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+          const numero = f?.properties?.numero_dpe;
+          if (typeof numero === "string") {
+            const found = (window as unknown as { __maisonsCache?: MaisonDpe[] }).__maisonsCache?.find(
+              (x) => x.numero_dpe === numero,
+            );
+            if (found) {
+              setSelected(found);
+              setSheetTrigger((n) => n + 1);
+            }
+          }
+        });
+
+        m.on("click", "clusters", (e) => {
+          const f = e.features?.[0];
+          const clusterId = f?.properties?.cluster_id;
+          if (clusterId == null) return;
+          const src = m.getSource("maisons") as maplibregl.GeoJSONSource;
+          src.getClusterExpansionZoom(clusterId).then((zoom) => {
+            const c = (f!.geometry as GeoJSON.Point).coordinates as [number, number];
+            m.easeTo({ center: c, zoom });
+          });
+        });
+
+        m.on("mouseenter", "maison-dot", () => (m.getCanvas().style.cursor = "pointer"));
+        m.on("mouseleave", "maison-dot", () => (m.getCanvas().style.cursor = ""));
+        m.on("mouseenter", "clusters", () => (m.getCanvas().style.cursor = "pointer"));
+        m.on("mouseleave", "clusters", () => (m.getCanvas().style.cursor = ""));
+
+        setReady(true);
       });
+    };
 
-      map.on("mouseenter", "maison-dot", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "maison-dot", () => (map.getCanvas().style.cursor = ""));
-      map.on("mouseenter", "clusters", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "clusters", () => (map.getCanvas().style.cursor = ""));
-
-      setReady(true);
+    const ro = new ResizeObserver(() => {
+      if (!mapRef.current) tryInit();
+      else safeResize();
     });
+    ro.observe(container);
+    window.addEventListener("resize", safeResize);
+    tryInit(); // tentative immédiate
 
     return () => {
+      cancelled = true;
       timers.forEach((id) => window.clearTimeout(id));
       ro.disconnect();
       window.removeEventListener("resize", safeResize);
-      map.remove();
+      mapRef.current?.remove();
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
