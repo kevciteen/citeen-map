@@ -303,7 +303,16 @@ export async function lookupMaisonByAddress(query: string): Promise<MaisonLookup
   }
 
   return {
-    banResolved: { ...ban, score: ban.score },
+    banResolved: {
+      label: ban.label,
+      housenumber: ban.housenumber ?? null,
+      street: ban.street ?? null,
+      postcode: ban.postcode ?? null,
+      city: ban.city ?? null,
+      lat: ban.lat,
+      lon: ban.lon,
+      score: ban.score,
+    },
     parcelle,
     totalDpeFound: raw.length,
     matched,
