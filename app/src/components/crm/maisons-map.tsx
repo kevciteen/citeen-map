@@ -76,6 +76,7 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<string>("init…");
   const [selected, setSelected] = useState<MaisonDpe | null>(null);
   const [sheetTrigger, setSheetTrigger] = useState(0); // to re-open sheet
 
@@ -96,8 +97,10 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       if (cancelled || mapRef.current) return;
       const w = container.clientWidth;
       const h = container.clientHeight;
+      setStatus(`container ${w}×${h}`);
       if (w < 10 || h < 10) return; // pas encore prêt — on ré‑essaiera via ResizeObserver
 
+      setStatus(`init map ${w}×${h}`);
       const m = new maplibregl.Map({
         container,
         style: "https://tiles.openfreemap.org/styles/liberty",
@@ -109,7 +112,16 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
       m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
       timers = [50, 200, 500, 1000].map((d) => window.setTimeout(safeResize, d));
 
+      m.on("error", (e) => {
+        // Log toutes les erreurs MapLibre dans le badge debug pour diag prod
+        const msg = e?.error?.message ?? "unknown error";
+        setStatus(`map error: ${msg.slice(0, 80)}`);
+        // eslint-disable-next-line no-console
+        console.error("[MaisonsMap] map error", e);
+      });
+
       m.on("load", () => {
+        setStatus("style loaded");
         m.addSource("maisons", {
           type: "geojson",
           data: { type: "FeatureCollection", features: [] },
@@ -262,6 +274,11 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="absolute inset-0" style={{ background: "#eef2f7" }} />
+
+      {/* DEBUG badge — à retirer une fois la map confirmée OK */}
+      <div className="pointer-events-none absolute right-3 top-3 z-20 rounded bg-black/70 px-2 py-1 font-mono text-[10px] text-white">
+        map: {status} · ready={String(ready)} · items={items.length}
+      </div>
 
       {/* DPE color legend */}
       <div className="absolute left-3 top-3 z-10 rounded-lg border border-border bg-card/95 p-2 shadow backdrop-blur">
