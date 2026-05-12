@@ -390,14 +390,15 @@ export function MaisonsZoneSearch({
         </div>
       </div>
 
-      {/* Results */}
-      <div className="flex-1 overflow-hidden">
+      {/* Results — relative + min-h-0 garantit que les enfants en absolute
+          ou h-full reçoivent une hauteur calculée par flex (sinon collapse à 0) */}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {items.length === 0 && !loading ? (
           <p className="p-8 text-center text-sm text-muted-foreground">
             Définissez un CP ou une commune, choisissez les classes DPE cibles (par défaut F+G = passoires thermiques), et cliquez Rechercher.
           </p>
         ) : view === "list" ? (
-          <div className="h-full overflow-auto p-4">
+          <div className="absolute inset-0 overflow-auto p-4">
             <div className="grid gap-2">
               {items.map((m) => (
                 <MaisonRow
@@ -410,7 +411,7 @@ export function MaisonsZoneSearch({
             </div>
           </div>
         ) : (
-          <div className="h-full w-full">
+          <div className="absolute inset-0">
             <MaisonsMap items={items} />
           </div>
         )}
