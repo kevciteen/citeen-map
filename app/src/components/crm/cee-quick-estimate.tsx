@@ -1,7 +1,8 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Coins, Zap, Info, ChevronDown, ChevronUp } from "lucide-react";
+import { Coins, Zap, Info, ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 import { quickEstimate, type QuickEstimateInput, type Evaluation } from "@/lib/services/cee/engine";
 
 type ClasseDpe = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "NC";
@@ -20,44 +21,120 @@ export function CeeQuickEstimate({
   constructionYear: number | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Overrides utilisateurs si l'ADEME ne renvoie pas un champ
+  const [surfaceOverride, setSurfaceOverride] = useState<string>("");
+  const [postcodeOverride, setPostcodeOverride] = useState<string>("");
+  const [yearOverride, setYearOverride] = useState<string>("");
   const housingType =
     typeBatiment === "appartement" ? "Appartement" : "Maison individuelle";
 
+  const finalSurface =
+    surface ?? (surfaceOverride.trim() ? Number(surfaceOverride) : null);
+  const finalPostalCode = postalCode ?? (postcodeOverride.trim() || null);
+  const finalYear =
+    constructionYear ?? (yearOverride.trim() ? Number(yearOverride) : null);
+
+  const missing: string[] = [];
+  if (!finalSurface) missing.push("surface");
+  if (!finalPostalCode) missing.push("code postal");
+  if (!finalYear) missing.push("année de construction");
+
   const result = useMemo(() => {
-    if (!surface || !postalCode || !constructionYear) {
+    if (missing.length > 0) {
       return {
         applicable: false,
-        reason:
-          "Données projet incomplètes (surface, code postal ou année de construction).",
+        reason: `Manque : ${missing.join(", ")}.`,
         housingType,
         scenarios: [],
       };
     }
     const input: QuickEstimateInput = {
       housingType,
-      surface,
-      postalCode,
-      constructionYear,
+      surface: finalSurface!,
+      postalCode: finalPostalCode!,
+      constructionYear: finalYear!,
       classeDpe: (classeDpe?.toUpperCase() as ClasseDpe) || "NC",
-      mwhCumacPrice: 7, // marché 2026 ~7€/MWh cumac, conservateur
+      mwhCumacPrice: 7,
       mwhCumacPricePrecarious: 9,
     };
     return quickEstimate(input);
-  }, [housingType, surface, postalCode, constructionYear, classeDpe]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [housingType, finalSurface, finalPostalCode, finalYear, classeDpe]);
 
+  // === Cas 1 : champs manquants → on demande à l'utilisateur ============
+  if (missing.length > 0) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+        <div className="mb-2 flex items-center gap-1 text-xs font-semibold text-amber-900">
+          <Pencil className="h-3.5 w-3.5" />
+          Quelques infos manquent côté ADEME — saisis-les pour calculer
+        </div>
+        <p className="mb-2 text-[11px] text-amber-800/90">
+          L'ADEME n'a pas renseigné : <strong>{missing.join(", ")}</strong>.
+          Renseigne-les ci-dessous pour estimer le CEE.
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {!surface ? (
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-amber-900">
+                Surface (m²)
+              </label>
+              <Input
+                value={surfaceOverride}
+                onChange={(e) => setSurfaceOverride(e.target.value)}
+                placeholder="ex: 90"
+                type="number"
+                className="h-8 text-xs"
+              />
+            </div>
+          ) : null}
+          {!postalCode ? (
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-amber-900">
+                Code postal
+              </label>
+              <Input
+                value={postcodeOverride}
+                onChange={(e) => setPostcodeOverride(e.target.value)}
+                placeholder="ex: 75011"
+                maxLength={5}
+                className="h-8 text-xs"
+              />
+            </div>
+          ) : null}
+          {!constructionYear ? (
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-amber-900">
+                Année construction
+              </label>
+              <Input
+                value={yearOverride}
+                onChange={(e) => setYearOverride(e.target.value)}
+                placeholder="ex: 1975"
+                type="number"
+                className="h-8 text-xs"
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // === Cas 2 : DPE pas pertinent (A/B/C) ================================
   if (!result.applicable) {
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
         <div className="mb-1 flex items-center gap-1 font-semibold">
           <Info className="h-3.5 w-3.5" />
-          Estimation CEE — non disponible
+          Estimation CEE — non pertinente
         </div>
         <p>{result.reason}</p>
       </div>
     );
   }
 
-  // Le scénario "2 sauts" comme tête de gondole. Les autres dépliables.
+  // === Cas 3 : on a tout, on affiche les scénarios =======================
   const head = result.scenarios[0];
   const others = result.scenarios.slice(1);
 
@@ -216,4 +293,4 @@ function formatKwh(v: number | null): string {
   return Math.round(v).toLocaleString("fr-FR");
 }
 
-void Zap; // hint au tree-shaker
+void Zap;
