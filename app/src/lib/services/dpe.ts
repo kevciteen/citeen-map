@@ -417,6 +417,8 @@ export type DpeIndividuel = {
   type_dpe: string | null;
   annee_construction: number | null;
   type_batiment: string | null;
+  /** Énergie principale de chauffage (ex: "Gaz naturel", "Fioul", "Électricité"). */
+  energie_principale_chauffage: string | null;
   isCollectif: boolean;
 };
 
@@ -529,6 +531,10 @@ function toIndividuel(d: AdemeRecord): DpeIndividuel {
       null,
     annee_construction: annee,
     type_batiment: (d.type_batiment as string) || null,
+    energie_principale_chauffage:
+      (d.type_energie_principale_chauffage as string) ||
+      (d.type_energie_n1 as string) ||
+      null,
     isCollectif: isCollectifRecord(d),
   };
 }

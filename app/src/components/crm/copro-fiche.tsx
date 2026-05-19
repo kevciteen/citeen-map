@@ -24,6 +24,7 @@ import { EditCoproSheet } from "@/components/crm/edit-copro-sheet";
 import { DpeIndividualsCard } from "@/components/crm/dpe-individuals-card";
 import { SimilarsCard } from "@/components/crm/similars-card";
 import { CoproStreetView } from "@/components/crm/copro-streetview";
+import { CeeCoproPostes } from "@/components/crm/cee-copro-postes";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -591,6 +592,27 @@ export function CoproFiche({
           ) : (
             <p className="text-sm text-muted-foreground">DPE non chargé.</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* TRAVAUX CEE COLLECTIFS ÉLIGIBLES */}
+      <Card className="print:shadow-none">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-emerald-700" />
+            <CardTitle className="text-sm">Travaux CEE collectifs éligibles</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <CeeCoproPostes
+            classeDpeCollective={
+              details?.immeubleFinal.classe ?? copro.classe_finale ?? null
+            }
+            periodeConstruction={copro.periode_construction ?? null}
+            nbLotsHabitation={copro.nb_lots_habitation ?? null}
+            codePostal={copro.code_postal ?? null}
+            matchedIndividuals={details?.matchedRecords ?? undefined}
+          />
         </CardContent>
       </Card>
 

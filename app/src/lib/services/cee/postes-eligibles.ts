@@ -299,3 +299,234 @@ export function getPostesEligibles(input: PosteDetectionInput): Poste[] {
 
   return postes;
 }
+
+// ========================================================================
+// Variante COPROPRIÉTÉ — basée sur la classe DPE collective + période
+// ========================================================================
+
+export interface CoproDetectionInput {
+  /** Classe DPE collective (réelle si DPE collectif, sinon simulée). */
+  classeDpeCollective: string | null;
+  /** Période de construction du registre (AVANT_1949, DE_1949_A_1974, ...). */
+  periodeConstruction: string | null;
+  /** Nombre de lots d'habitation. */
+  nbLotsHabitation: number | null;
+  /** Département (proxy IDF/zone climatique) pour le raccordement réseau de chaleur. */
+  codePostal: string | null;
+  /** Énergie de chauffage dominante détectée depuis les DPE individuels matchés (si disponible). */
+  energieChauffageDominante?: string | null;
+  /** Si une majorité des DPE individuels matchés est en F ou G. */
+  partPassoires?: number | null; // 0..1
+}
+
+function periodeAvant(period: string | null, year: number): boolean {
+  if (!period) return false;
+  if (year <= 1949) return period === "AVANT_1949";
+  if (year <= 1974) return period === "AVANT_1949" || period === "DE_1949_A_1974";
+  if (year <= 1993)
+    return ["AVANT_1949", "DE_1949_A_1974", "DE_1975_A_1993"].includes(period);
+  if (year <= 2000)
+    return [
+      "AVANT_1949",
+      "DE_1949_A_1974",
+      "DE_1975_A_1993",
+      "DE_1994_A_2000",
+    ].includes(period);
+  return true;
+}
+
+function isParisDense(codePostal: string | null): boolean {
+  if (!codePostal) return false;
+  // Paris intra-muros + petite couronne dense : réseau CPCU / Idex / Coriance
+  return /^(75|92|93|94)\d{3}$/.test(codePostal);
+}
+
+/**
+ * Postes CEE applicables à une copropriété d'habitation.
+ *
+ * Diffère de la version logement individuel : on n'a pas la qualité d'isolation
+ * détaillée par poste, mais on a la classe DPE collective (réelle ou simulée)
+ * et la période de construction du registre. On en déduit les pistes de
+ * rénovation collective les plus probables.
+ */
+export function getPostesEligiblesCopro(input: CoproDetectionInput): Poste[] {
+  const postes: Poste[] = [];
+  const dpe = (input.classeDpeCollective ?? "").toUpperCase();
+  const isPassoire = dpe === "F" || dpe === "G";
+  const isMauvais = dpe === "D" || dpe === "E";
+  const ancien = periodeAvant(input.periodeConstruction, 1974);
+  const anneeApprox =
+    input.periodeConstruction === "AVANT_1949"
+      ? "Avant 1949"
+      : input.periodeConstruction === "DE_1949_A_1974"
+        ? "1949-1974"
+        : input.periodeConstruction === "DE_1975_A_1993"
+          ? "1975-1993"
+          : null;
+
+  // --- Bouquet de rénovation collective ---------------------------------
+  if (isPassoire) {
+    postes.push({
+      code: "BAR-TH-145",
+      titre: "Programme global de rénovation thermique collectif",
+      famille: "Bouquet",
+      status: "pertinent",
+      motifs: [
+        `DPE collectif ${dpe} — passoire thermique, bouquet de travaux à décider en AG`,
+        ancien
+          ? `Période ${anneeApprox} — opportunité majeure d'isolation enveloppe + chauffage`
+          : "Examiner le DPE collectif récent pour confirmer les postes prioritaires",
+      ],
+      sourceUrl:
+        "https://www.ecologie.gouv.fr/fiches-doperations-standardisees-pour-les-operations-deconomies-denergie",
+    });
+  } else if (isMauvais) {
+    postes.push({
+      code: "BAR-TH-145",
+      titre: "Programme global de rénovation thermique collectif",
+      famille: "Bouquet",
+      status: "à confirmer",
+      motifs: [
+        `DPE collectif ${dpe} — gain de 2 classes envisageable, à valider par audit`,
+      ],
+    });
+  }
+
+  // --- Isolation enveloppe par l'extérieur (parties communes) -----------
+  if (ancien || isPassoire) {
+    postes.push({
+      code: "BAR-EN-102",
+      titre: "Isolation des murs par l'extérieur (parties communes)",
+      famille: "Isolation",
+      status: ancien ? "pertinent" : "à confirmer",
+      motifs: [
+        ancien
+          ? `Période ${anneeApprox} — murs probablement non isolés (RT 1974 non appliquée)`
+          : "À vérifier sur audit",
+        "Décision AG requise (article 25 loi 1965)",
+      ],
+    });
+  }
+
+  // --- Isolation combles / toiture (parties communes) -------------------
+  if (ancien || isPassoire) {
+    postes.push({
+      code: "BAR-EN-101",
+      titre: "Isolation de la toiture / combles (parties communes)",
+      famille: "Isolation",
+      status: ancien ? "pertinent" : "à confirmer",
+      motifs: [
+        ancien
+          ? `Période ${anneeApprox} — toiture/combles probablement peu isolés`
+          : "À vérifier sur audit",
+      ],
+    });
+  }
+
+  // --- Isolation plancher bas (sous-sol / cave) -------------------------
+  if (ancien || isPassoire) {
+    postes.push({
+      code: "BAR-EN-103",
+      titre: "Isolation des planchers bas (sous-sol commun)",
+      famille: "Isolation",
+      status: ancien ? "pertinent" : "à confirmer",
+      motifs: [
+        ancien
+          ? `Période ${anneeApprox} — sous-sol/cave non isolé en règle générale`
+          : "À vérifier sur audit",
+      ],
+    });
+  }
+
+  // --- Remplacement chaudière collective fioul/gaz → PAC ----------------
+  {
+    const energy = (input.energieChauffageDominante ?? "").toLowerCase();
+    const isFossil =
+      energy.includes("fioul") ||
+      energy.includes("fuel") ||
+      energy.includes("gaz") ||
+      energy.includes("charbon");
+    if (isFossil) {
+      postes.push({
+        code: "BAR-TH-143",
+        titre: "PAC collective haute performance (remplacement chaudière)",
+        famille: "Chauffage",
+        status: "pertinent",
+        motifs: [
+          `Énergie collective dominante : ${input.energieChauffageDominante}`,
+          "Décision AG majorité absolue (article 24 loi 1965) — éligible CEE collectif",
+        ],
+      });
+    } else if (ancien && !energy) {
+      postes.push({
+        code: "BAR-TH-143",
+        titre: "PAC collective haute performance",
+        famille: "Chauffage",
+        status: "à confirmer",
+        motifs: [
+          `Période ${anneeApprox} — chaudière collective probablement vieillissante`,
+          "Vérifier l'énergie sur le DPE collectif ou les DPE individuels",
+        ],
+      });
+    }
+  }
+
+  // --- Raccordement réseau de chaleur (BAR-TH-176 / BAT-TH-159) ---------
+  if (isParisDense(input.codePostal)) {
+    postes.push({
+      code: "BAR-TH-176",
+      titre: "Raccordement au réseau de chaleur urbain (CPCU / Coriance)",
+      famille: "Chauffage",
+      status: "à confirmer",
+      motifs: [
+        "Zone urbaine dense (Paris + petite couronne) — couverture réseau de chaleur fréquente",
+        "Vérifier l'éligibilité géographique avec l'opérateur local",
+      ],
+    });
+  }
+
+  // --- VMC collective ---------------------------------------------------
+  if (ancien) {
+    postes.push({
+      code: "BAR-TH-127",
+      titre: "VMC double flux collective haute performance",
+      famille: "Ventilation",
+      status: "à confirmer",
+      motifs: [
+        `Période ${anneeApprox} — ventilation collective souvent absente ou très basique`,
+      ],
+    });
+  }
+
+  // --- Rénovation d'ampleur appartement (pour les coproprios individuels)
+  if (isPassoire) {
+    postes.push({
+      code: "BAR-TH-175",
+      titre: "Rénovation d'ampleur appartement (action coproprio individuel)",
+      famille: "Bouquet",
+      status: "pertinent",
+      motifs: [
+        "Chaque coproprio en F/G peut engager une rénovation d'ampleur de son lot",
+        "Cumul possible avec MaPrimeRénov' Copro selon les revenus",
+      ],
+      sourceUrl:
+        "https://www.ecologie.gouv.fr/sites/default/files/documents/BAR-TH-175%20vA80-3%20%C3%A0%20compter%20du%2017-01-2026.pdf",
+    });
+  }
+
+  // --- Info contextuelle si quasi rien détecté --------------------------
+  if (postes.length === 0 && dpe && dpe !== "NC") {
+    postes.push({
+      code: "—",
+      titre: "Pas de poste CEE évident détecté",
+      famille: "Bouquet",
+      status: "à confirmer",
+      motifs: [
+        `DPE collectif ${dpe} — copropriété déjà performante ou données insuffisantes`,
+        "Audit énergétique recommandé pour confirmer",
+      ],
+    });
+  }
+
+  return postes;
+}
