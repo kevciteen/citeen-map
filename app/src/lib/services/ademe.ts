@@ -55,6 +55,51 @@ function dedupeLatestByNumeroDpe(list: AdemeRecord[]): AdemeRecord[] {
   return [...best.values()];
 }
 
+/**
+ * Récupère un DPE ADEME par son numéro. Utilisé par la page dédiée
+ * /maisons/[numero_dpe] et /appartements/[numero_dpe].
+ */
+export async function fetchAdemeDpeByNumero(numero: string): Promise<AdemeRecord | null> {
+  if (!numero || numero.length < 5) return null;
+  const key = `ademe:numero:${numero}`;
+  const hit = cacheGet<AdemeRecord | null>(key);
+  if (hit !== null) return hit;
+
+  const url = new URL(DPE_API_BASE);
+  url.searchParams.set("size", "5");
+  url.searchParams.set("qs", `numero_dpe:"${numero}"`);
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch(url, {
+      headers: { accept: "application/json" },
+      next: { revalidate: 3600 },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      cacheSet(key, null, 60 * 60 * 1000);
+      return null;
+    }
+    const json = (await res.json()) as { results?: AdemeRecord[] };
+    const raw = Array.isArray(json?.results) ? json.results : [];
+    // Garde le plus récent par date_derniere_modification
+    const sorted = [...raw].sort(
+      (a, b) =>
+        (parseDate(b?.date_derniere_modification_dpe) ||
+          parseDate(b?.date_etablissement_dpe)) -
+        (parseDate(a?.date_derniere_modification_dpe) ||
+          parseDate(a?.date_etablissement_dpe)),
+    );
+    const found = sorted[0] ?? null;
+    cacheSet(key, found, 24 * 3600 * 1000);
+    return found;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchAdemeDpeAround(opts: {
   lat: number;
   lon: number;

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Loader2, MapPin, Home, Building, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -423,9 +424,16 @@ function MaisonResultCard({
               )}
             </div>
             <div>
-              <h2 className="text-xl font-black tracking-tight">
-                {m.address.housenumber} {m.address.street}
-              </h2>
+              <Link
+                href={`/${apiSegment}/${encodeURIComponent(m.numero_dpe)}`}
+                className="group inline-flex items-baseline gap-1 hover:underline"
+                title="Ouvrir la fiche détaillée"
+              >
+                <h2 className="text-xl font-black tracking-tight">
+                  {m.address.housenumber} {m.address.street}
+                </h2>
+                <ExternalLink className="h-4 w-4 opacity-0 transition group-hover:opacity-80" />
+              </Link>
               <p className="text-sm opacity-90">
                 {m.address.postcode} {m.address.city}
               </p>

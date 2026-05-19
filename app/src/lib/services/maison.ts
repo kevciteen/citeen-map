@@ -211,7 +211,7 @@ function pickString(d: AdemeRecord, keys: string[]): string | null {
   return null;
 }
 
-function toMaisonDpe(rec: AdemeRecord): MaisonDpe {
+export function toMaisonDpe(rec: AdemeRecord): MaisonDpe {
   const numero = String(rec.numero_dpe ?? "");
   return {
     numero_dpe: numero,

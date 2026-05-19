@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { Loader2, Search, Home, Building, ExternalLink, Plus, Download, Eye, SlidersHorizontal, List, Map as MapIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -447,6 +448,7 @@ function MaisonRow({
   onToggle: () => void;
   typeBatiment?: BatimentType;
 }) {
+  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
   return (
     <div className={cn("flex items-center gap-3 rounded-lg border border-border bg-card p-3", checked && "border-primary bg-primary/5")}>
       <input type="checkbox" checked={checked} onChange={onToggle} className="h-4 w-4" />
@@ -456,14 +458,18 @@ function MaisonRow({
       ) : (
         <Home className="h-3.5 w-3.5 text-muted-foreground" />
       )}
-      <div className="min-w-0 flex-1">
+      <Link
+        href={`/${apiSegment}/${encodeURIComponent(m.numero_dpe)}`}
+        className="min-w-0 flex-1 group hover:underline"
+        title="Ouvrir la fiche détaillée"
+      >
         <p className="truncate text-sm font-semibold">
           {m.address.housenumber} {m.address.street}
         </p>
         <p className="truncate text-[11px] text-muted-foreground">
           {m.address.postcode} {m.address.city}
         </p>
-      </div>
+      </Link>
       <div className="hidden items-center gap-3 text-xs sm:flex">
         {m.conso ? (
           <span>
