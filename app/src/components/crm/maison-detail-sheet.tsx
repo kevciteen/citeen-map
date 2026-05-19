@@ -11,6 +11,7 @@ import { DpeBadge, DpeScaleBar } from "@/components/ui/dpe-badge";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { CeeQuickEstimate } from "@/components/crm/cee-quick-estimate";
 
 type MaisonDpe = {
   numero_dpe: string;
@@ -405,6 +406,20 @@ export function MaisonDetailSheet({
                 value={fmtDate(maison.date_fin_validite)}
                 strong={expired}
                 danger={expired}
+              />
+            </Section>
+
+            {/* SIMULATEUR CEE QUICK */}
+            <Section
+              icon={<Banknote className="h-4 w-4 text-emerald-700" />}
+              title="Estimation CEE — rénovation d'ampleur"
+            >
+              <CeeQuickEstimate
+                typeBatiment={typeBatiment}
+                classeDpe={maison.classe}
+                surface={maison.surface}
+                postalCode={maison.address.postcode}
+                constructionYear={maison.annee_construction}
               />
             </Section>
 
