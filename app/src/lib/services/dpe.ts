@@ -396,29 +396,25 @@ function isCollectifRecord(d: AdemeRecord): boolean {
   const t = String(d?.type_dpe || d?.type_dpe_batiment || "").toUpperCase();
   const tb = String(d?.type_batiment || "").toUpperCase();
 
-  // Cas évidents : type_batiment dit "immeuble", ou type_dpe mentionne IMMEUBLE
+  // 1) Exclusions explicites : un DPE de logement individuel n'est jamais
+  //    un DPE collectif d'immeuble, même si numero_dpe_immeuble est rempli
+  //    (référence parent).
+  if (tb === "APPARTEMENT" || tb === "MAISON") return false;
+  // "DPE 6.2 logement habitation individuelle" / "DPE 6.3 logement collectif"
+  // (= un appartement dans un collectif) contiennent "LOGEMENT" mais ne sont
+  // PAS un DPE d'immeuble entier. On les exclut sauf si le type_dpe
+  // mentionne explicitement IMMEUBLE.
+  if (t.includes("LOGEMENT") && !t.includes("IMMEUBLE")) return false;
+
+  // 2) Inclusions claires
   if (tb === "IMMEUBLE") return true;
   if (t.includes("IMMEUBLE")) return true;
-
-  // Piège : "Logement collectif" (DPE 6.3) = un appartement DANS un immeuble,
-  // PAS un DPE d'immeuble entier. On ne le considère collectif QUE si le
-  // type_batiment ne dit pas explicitement appartement ou maison.
-  if (t.includes("COLLECTIF") && tb !== "APPARTEMENT" && tb !== "MAISON") {
-    return true;
-  }
-
-  // numero_dpe_immeuble peut être renseigné sur un appartement pour le lier
-  // à son DPE d'immeuble parent. On exige donc qu'il ne s'agisse pas
-  // explicitement d'un logement individuel.
-  if (
-    d?.numero_dpe_immeuble &&
-    !d?.numero_dpe && // pas de numero individuel = c'est bien l'immeuble lui-même
-    tb !== "APPARTEMENT" &&
-    tb !== "MAISON"
-  ) {
-    return true;
-  }
-  if (d?.numero_dpe_immeuble_associe && tb === "IMMEUBLE") return true;
+  // "COLLECTIF" sans "LOGEMENT" : c'est un DPE d'immeuble collectif
+  if (t.includes("COLLECTIF")) return true;
+  // numero_dpe_immeuble rempli et pas de type explicitement individuel
+  // → probablement un DPE immeuble (par défaut tolérant)
+  if (d?.numero_dpe_immeuble) return true;
+  if (d?.numero_dpe_immeuble_associe) return true;
 
   return false;
 }

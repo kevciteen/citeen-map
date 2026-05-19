@@ -267,8 +267,11 @@ export function CeeCoproPostes({
     [visibleResults],
   );
 
+  // Cumul UNIQUEMENT sur les fiches cochées par l'utilisateur. Si rien
+  // coché → totaux à 0 et message d'invitation. On évite l'effet "total
+  // automatique qui peut induire en erreur".
   const hasSelection = selectedCodes.size > 0;
-  const cumulCodes = hasSelection ? selectedCodes : eligibleCodes;
+  const cumulCodes = selectedCodes;
 
   const totalsStd = useMemo(
     () =>
@@ -388,38 +391,52 @@ export function CeeCoproPostes({
       {/* ============ HEADER : TOTAUX XL ============ */}
       <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-emerald-900 to-emerald-700 p-5 text-white shadow-xl">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] opacity-80">
               <Coins className="h-3 w-3" />
               {hasSelection
-                ? `Panier · ${selectedCodes.size} fiches sélectionnées`
-                : `Estimation auto · ${eligibleCodes.size} fiches éligibles`}
+                ? `Panier · ${selectedCodes.size} fiche${selectedCodes.size > 1 ? "s" : ""} sélectionnée${selectedCodes.size > 1 ? "s" : ""}`
+                : `Catalogue · ${eligibleCodes.size} éligibles disponibles`}
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-6">
-              <div>
-                <div className="text-[10px] uppercase tracking-wider opacity-70">
-                  Revenus standard
+            {hasSelection ? (
+              <div className="mt-3 grid grid-cols-2 gap-6">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider opacity-70">
+                    Revenus standard
+                  </div>
+                  <div className="text-4xl font-black tabular-nums tracking-tight">
+                    {formatEuros(totalsStd.euroAmount)}
+                  </div>
+                  <div className="text-[10px] opacity-70">
+                    {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
+                  </div>
                 </div>
-                <div className="text-4xl font-black tabular-nums tracking-tight">
-                  {formatEuros(totalsStd.euroAmount)}
-                </div>
-                <div className="text-[10px] opacity-70">
-                  {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
+                <div>
+                  <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-purple-200">
+                    <Sparkles className="h-3 w-3" />
+                    Très modestes
+                  </div>
+                  <div className="text-4xl font-black tabular-nums tracking-tight text-purple-100">
+                    {formatEuros(totalsModest.euroAmount)}
+                  </div>
+                  <div className="text-[10px] text-purple-200/70">
+                    Coup de pouce inclus
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-purple-200">
-                  <Sparkles className="h-3 w-3" />
-                  Très modestes
-                </div>
-                <div className="text-4xl font-black tabular-nums tracking-tight text-purple-100">
-                  {formatEuros(totalsModest.euroAmount)}
-                </div>
-                <div className="text-[10px] text-purple-200/70">
-                  Coup de pouce inclus
-                </div>
+            ) : (
+              <div className="mt-3 max-w-md">
+                <p className="text-base font-semibold leading-tight">
+                  Compose ton bouquet de travaux
+                </p>
+                <p className="mt-1 text-xs opacity-80">
+                  Coche les fiches CEE qui t'intéressent dans la grille ci-dessous
+                  pour voir le cumul de primes (revenus standard + très modestes
+                  avec Coup de pouce). Les fiches "à compléter" se débloquent en
+                  cliquant sur "Compléter".
+                </p>
               </div>
-            </div>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             {hasSelection ? (
@@ -430,7 +447,7 @@ export function CeeCoproPostes({
               >
                 Vider
               </button>
-            ) : (
+            ) : eligibleCodes.size > 0 ? (
               <button
                 type="button"
                 onClick={selectAllEligible}
@@ -438,7 +455,7 @@ export function CeeCoproPostes({
               >
                 Tout cocher
               </button>
-            )}
+            ) : null}
             <button
               type="button"
               onClick={exportCsv}
