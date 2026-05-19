@@ -1,0 +1,58 @@
+"use client";
+import { useState } from "react";
+import { KanbanBoard } from "@/components/crm/kanban-board";
+import { PipelineTable } from "@/components/crm/pipeline-table";
+import { Download, Kanban as KanbanIcon, Table as TableIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type View = "table" | "kanban";
+
+/**
+ * Section "Pipeline" pour la page /pilotage.
+ * Identique à /prospects mais sans Topbar (qui est déjà rendu plus haut).
+ */
+export function PipelineSection() {
+  const [view, setView] = useState<View>("table");
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-4 py-2">
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+          <button
+            onClick={() => setView("table")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
+              view === "table"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-secondary",
+            )}
+          >
+            <TableIcon className="h-3.5 w-3.5" />
+            Tableau
+          </button>
+          <button
+            onClick={() => setView("kanban")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
+              view === "kanban"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-secondary",
+            )}
+          >
+            <KanbanIcon className="h-3.5 w-3.5" />
+            Kanban
+          </button>
+        </div>
+        <a
+          href="/api/export/prospects.csv"
+          className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-secondary"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Exporter CSV
+        </a>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        {view === "table" ? <PipelineTable /> : <KanbanBoard />}
+      </div>
+    </div>
+  );
+}

@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import { Building2, Home, Search, Sliders, X } from "lucide-react";
+import { Building2, Building, Home, Search, Sliders, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { cn } from "@/lib/utils";
 
-export type MapMode = "copros" | "maisons" | "both";
+export type MapMode = "copros" | "maisons" | "appartements" | "both";
 
 const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G", "NC"] as const;
 const DEPARTEMENTS = ["75", "77", "78", "91", "92", "93", "94", "95"];
@@ -82,8 +82,8 @@ export function FiltersBar({
 
         {open ? (
           <div className="space-y-3 p-4">
-            {/* Mode toggle : copros / maisons / les deux */}
-            <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+            {/* Mode toggle : copros / maisons / appartements / tous */}
+            <div className="grid grid-cols-4 gap-1 rounded-lg border border-border bg-background p-0.5">
               <ModeBtn
                 active={value.mode === "copros"}
                 onClick={() => onChange({ ...value, mode: "copros" })}
@@ -97,10 +97,16 @@ export function FiltersBar({
                 label="Maisons"
               />
               <ModeBtn
+                active={value.mode === "appartements"}
+                onClick={() => onChange({ ...value, mode: "appartements" })}
+                icon={<Building className="h-3.5 w-3.5" />}
+                label="Apparts"
+              />
+              <ModeBtn
                 active={value.mode === "both"}
                 onClick={() => onChange({ ...value, mode: "both" })}
                 icon={null}
-                label="Les deux"
+                label="Tous"
               />
             </div>
 

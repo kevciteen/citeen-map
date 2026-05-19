@@ -92,8 +92,11 @@ export default function MapPage() {
     try {
       const wantsCopros = f.mode === "copros" || f.mode === "both";
       const wantsMaisons = f.mode === "maisons" || f.mode === "both";
+      const wantsAppts = f.mode === "appartements" || f.mode === "both";
 
       const tasks: Array<Promise<unknown>> = [];
+      let aggregatedItems: MaisonFull[] = [];
+      let aggregatedTotal = 0;
 
       if (wantsCopros) {
         const sp = new URLSearchParams();
@@ -119,8 +122,8 @@ export default function MapPage() {
         setCount(0);
       }
 
-      if (wantsMaisons) {
-        // Champ dédié commune > détection du q comme CP > q comme commune
+      // Helper pour bâtir les params communs maisons/appartements
+      const buildZoneSp = (): URLSearchParams | null => {
         const sp = new URLSearchParams();
         const cp = f.cp.trim();
         const commune = f.commune.trim();
@@ -131,36 +134,43 @@ export default function MapPage() {
         else if (!cp && !qIsLikelyCp && f.q.trim()) sp.set("commune", f.q.trim());
         if (f.dpeClasses.length) sp.set("dpe", f.dpeClasses.join(","));
         sp.set("limit", "500");
+        if (!sp.has("cp") && !sp.has("commune")) return null;
+        return sp;
+      };
 
-        if (sp.has("cp") || sp.has("commune")) {
-          tasks.push(
-            fetch(`/api/maisons/search?${sp}`)
-              .then((r) => (r.ok ? r.json() : { items: [], total: 0 }))
-              .then((j) => {
-                if (seq !== fetchSeq.current) return;
-                const items = j.items as MaisonFull[];
-                maisonsCache.current = new Map(items.map((m) => [m.numero_dpe, m]));
-                setMaisons(
-                  items
-                    .filter((m) => m.lat != null && m.lon != null)
-                    .map((m) => ({
-                      numero_dpe: m.numero_dpe,
-                      lat: m.lat!,
-                      lon: m.lon!,
-                      classe: m.classe,
-                      address: m.address.label,
-                    })),
-                );
-                setMaisonsCount(j.total ?? items.length);
-              }),
-          );
-        } else {
-          // Maisons demandées mais ni CP ni commune → on indique pourquoi rien ne s'affiche
+      if (wantsMaisons || wantsAppts) {
+        const sp = buildZoneSp();
+        if (!sp) {
           toast.info(
-            "Pour afficher les maisons, indique un code postal ou une commune",
+            "Pour afficher les maisons/appartements, indique un code postal ou une commune",
           );
           setMaisons([]);
           setMaisonsCount(0);
+        } else {
+          if (wantsMaisons) {
+            tasks.push(
+              fetch(`/api/maisons/search?${sp}`)
+                .then((r) => (r.ok ? r.json() : { items: [], total: 0 }))
+                .then((j) => {
+                  if (seq !== fetchSeq.current) return;
+                  const items = j.items as MaisonFull[];
+                  aggregatedItems = [...aggregatedItems, ...items];
+                  aggregatedTotal += j.total ?? items.length;
+                }),
+            );
+          }
+          if (wantsAppts) {
+            tasks.push(
+              fetch(`/api/appartements/search?${sp}`)
+                .then((r) => (r.ok ? r.json() : { items: [], total: 0 }))
+                .then((j) => {
+                  if (seq !== fetchSeq.current) return;
+                  const items = j.items as MaisonFull[];
+                  aggregatedItems = [...aggregatedItems, ...items];
+                  aggregatedTotal += j.total ?? items.length;
+                }),
+            );
+          }
         }
       } else {
         setMaisons([]);
@@ -168,6 +178,24 @@ export default function MapPage() {
       }
 
       await Promise.all(tasks);
+      if (seq !== fetchSeq.current) return;
+      if (wantsMaisons || wantsAppts) {
+        maisonsCache.current = new Map(
+          aggregatedItems.map((m) => [m.numero_dpe, m]),
+        );
+        setMaisons(
+          aggregatedItems
+            .filter((m) => m.lat != null && m.lon != null)
+            .map((m) => ({
+              numero_dpe: m.numero_dpe,
+              lat: m.lat!,
+              lon: m.lon!,
+              classe: m.classe,
+              address: m.address.label,
+            })),
+        );
+        setMaisonsCount(aggregatedTotal);
+      }
     } finally {
       if (seq === fetchSeq.current) setLoading(false);
     }

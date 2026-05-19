@@ -4,7 +4,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Map as MapIcon,
-  Kanban,
   LayoutDashboard,
   Building2,
   Building,
@@ -16,7 +15,6 @@ import {
   Shield,
   LogOut,
   KeyRound,
-  Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
@@ -24,10 +22,8 @@ import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
 type Me = { id: number; email: string; role: "admin" | "member"; name: string | null };
 
 const items = [
-  { href: "/today", label: "Aujourd'hui", icon: Sun },
-  { href: "/dashboard", label: "Vue d'ensemble", icon: LayoutDashboard },
+  { href: "/pilotage", label: "Pilotage", icon: LayoutDashboard },
   { href: "/map", label: "Carte prospection", icon: MapIcon },
-  { href: "/prospects", label: "Pipeline", icon: Kanban },
   { href: "/copros", label: "Copropriétés", icon: Building2 },
   { href: "/maisons", label: "Maisons individuelles", icon: Home },
   { href: "/appartements", label: "Appartements", icon: Building },
