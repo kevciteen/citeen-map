@@ -183,6 +183,27 @@ export const activities = sqliteTable(
   }),
 );
 
+export const documents = sqliteTable(
+  "documents",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    prospectId: integer("prospect_id")
+      .notNull()
+      .references(() => prospects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    kind: text("kind"), // devis, audit, photo, plan, courrier, autre
+    description: text("description"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    createdBy: text("created_by"),
+  },
+  (t) => ({
+    documentProspect: index("idx_documents_prospect").on(t.prospectId),
+  }),
+);
+
 export type Copro = typeof copros.$inferSelect;
 export type Prospect = typeof prospects.$inferSelect;
 export type Contact = typeof contacts.$inferSelect;
@@ -190,3 +211,4 @@ export type Note = typeof notes.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
 export type DpeEstimate = typeof dpeEstimates.$inferSelect;
+export type Document = typeof documents.$inferSelect;

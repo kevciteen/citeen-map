@@ -30,6 +30,7 @@ import { DpeBadge, DpeScaleBar } from "@/components/ui/dpe-badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { CeeQuickEstimate } from "@/components/crm/cee-quick-estimate";
+import { MaisonEnrichment } from "@/components/crm/maison-enrichment";
 
 type MaisonDpe = {
   numero_dpe: string;
@@ -626,11 +627,18 @@ export function MaisonFichePage({
         </CardContent>
       </Card>
 
-      <p className="rounded-lg bg-amber-50 p-2 text-[11px] italic text-amber-900">
-        💡 Contacts (propriétaire, occupant), notes libres et documents joints
-        arrivent dans une prochaine itération. En attendant, tu peux gérer les
-        notes et tâches via la fiche prospect dans le pipeline.
-      </p>
+      {/* Enrichissement : contacts + notes + documents */}
+      {prospect ? (
+        <MaisonEnrichment prospectId={prospect.id} />
+      ) : (
+        <Card>
+          <CardContent className="p-4 text-xs italic text-muted-foreground">
+            💡 Ajoute d'abord ce {typeBatiment === "appartement" ? "logement" : "logement"} au
+            pipeline (bouton plus haut) pour pouvoir saisir le propriétaire,
+            l'occupant, des notes ou joindre des documents.
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
