@@ -489,14 +489,44 @@ function MaisonProspectCard({
   } catch {}
   const address = (prospect.custom_address ?? prospect.custom_label ?? "") as string;
   const numeroDpe = (prospect.numero_dpe ?? null) as string | null;
+  const lat = (prospect.custom_lat ?? null) as number | null;
+  const lon = (prospect.custom_lon ?? null) as number | null;
   const segment = kind === "appartement" ? "appartements" : "maisons";
-  // Si on a stocké le numero_dpe lors de l'ajout au pipeline, on pointe
-  // directement sur la fiche détaillée. Sinon, on ouvre la page de
-  // recherche avec l'adresse pré-remplie (fallback pour prospects créés
-  // avant la colonne numero_dpe).
-  const detailHref = numeroDpe
-    ? `/${segment}/${encodeURIComponent(numeroDpe)}`
-    : `/${segment}?q=${encodeURIComponent(address)}`;
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  const openDetail = async () => {
+    // Cas 1 : numero_dpe stocké → redirection directe
+    if (numeroDpe) {
+      router.push(`/${segment}/${encodeURIComponent(numeroDpe)}`);
+      return;
+    }
+    // Cas 2 : lookup à la volée depuis lat/lon
+    if (lat != null && lon != null) {
+      setLoading(true);
+      try {
+        const r = await fetch(
+          `/api/maisons/find-dpe?lat=${lat}&lon=${lon}&type=${kind}`,
+        );
+        if (r.ok) {
+          const j = await r.json();
+          if (j.numero_dpe) {
+            router.push(`/${segment}/${encodeURIComponent(j.numero_dpe)}`);
+            return;
+          }
+        }
+        toast.error(
+          "Pas de DPE trouvé à ces coordonnées. Ouverture de la recherche.",
+        );
+        router.push(`/${segment}?q=${encodeURIComponent(address)}`);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    // Cas 3 : pas de coords → fallback recherche
+    router.push(`/${segment}?q=${encodeURIComponent(address)}`);
+  };
 
   return (
     <>
@@ -530,12 +560,14 @@ function MaisonProspectCard({
               value={<span className="font-mono text-[10px]">{numeroDpe}</span>}
             />
           ) : null}
-          <a
-            href={detailHref}
-            className="mt-2 block w-full rounded-md bg-primary px-3 py-1.5 text-center text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+          <button
+            type="button"
+            onClick={openDetail}
+            disabled={loading}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-center text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
           >
-            {numeroDpe ? "Ouvrir la fiche détaillée" : "Rechercher la fiche détaillée"}
-          </a>
+            {loading ? "Recherche du DPE…" : "Ouvrir la fiche détaillée"}
+          </button>
         </CardContent>
       </Card>
 

@@ -8,10 +8,12 @@ import {
   Wind,
   Layers,
   Cog,
-  ChevronDown,
-  ChevronUp,
   Sparkles,
   Pencil,
+  Plus,
+  Check,
+  Download,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -37,15 +39,32 @@ type SheetFamily =
   | "Equipement"
   | "Services";
 
+type IncomeKey = "veryModest" | "modest" | "intermediate" | "high";
+
+const FAMILY_ORDER: SheetFamily[] = [
+  "Thermique",
+  "Enveloppe",
+  "Equipement",
+  "Services",
+];
+
+const FAMILY_LABELS: Record<SheetFamily, string> = {
+  Bouquet: "Bouquet",
+  Enveloppe: "Enveloppe",
+  Thermique: "Thermique",
+  Equipement: "Équipement",
+  Services: "Services",
+};
+
 /**
- * Estimation CEE complète pour une copropriété d'habitation.
+ * Estimation CEE complète pour une copropriété — version marketplace.
  *
- * - Cache les fiches "Non éligibles" et "Potentiellement éligibles"
- * - Affiche en parallèle Standard (revenus intermédiaires) ET Très modeste
- *   (avec Coup de pouce ×2/×3/×4/×5 selon fiche) pour chaque fiche
- * - Mini formulaire pour compléter les champs manquants des "À confirmer"
- *   → recalcul live → bascule en Éligible
- * - Prix kWh cumac standard et précaire saisissables dans le bandeau
+ * Layout :
+ *  1. Header KPI : totaux Standard / Très modeste en très grand
+ *  2. Paramètres en bandeau collapsible (année, surface, prix CEE)
+ *  3. Filtres horizontaux par famille (avec compteurs)
+ *  4. Grille de cards (3 colonnes desktop, 1 mobile)
+ *  5. Panier flottant en bas à droite avec total + exports
  */
 export function CeeCoproPostes({
   classeDpeCollective,
@@ -66,16 +85,17 @@ export function CeeCoproPostes({
   const [yearOverride, setYearOverride] = useState<string>(
     defaultYear ? String(defaultYear) : "",
   );
-  const defaultSurface = nbLotsHabitation
-    ? Math.max(40, Math.round(60))
-    : 60;
+  const defaultSurface = 60;
   const [surfaceOverride, setSurfaceOverride] = useState<string>(
     String(defaultSurface),
   );
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [familyFilter, setFamilyFilter] = useState<SheetFamily | "all">("all");
   const [actionsOverride, setActionsOverride] = useState<Record<string, Action>>({});
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
+  const [editingCode, setEditingCode] = useState<string | null>(null);
 
+  // === Agrégats DPE individuels ========================================
   const aggregates = useMemo(() => {
     if (!matchedIndividuals || matchedIndividuals.length === 0) {
       return {
@@ -113,23 +133,25 @@ export function CeeCoproPostes({
     };
   }, [matchedIndividuals]);
 
-  // Project commun (housingType + incomeBracket sont injectés au moment d'évaluer)
+  // === Project & actions ===============================================
   const baseProject = useMemo<Omit<Project, "incomeBracket" | "housingType">>(() => {
     const yearFromOverride = Number(yearOverride);
     const yearFromPeriod = mapPeriodToYear(periodeConstruction);
-    const year = Number.isFinite(yearFromOverride) && yearFromOverride > 0
-      ? yearFromOverride
-      : (yearFromPeriod ?? undefined);
+    const year =
+      Number.isFinite(yearFromOverride) && yearFromOverride > 0
+        ? yearFromOverride
+        : (yearFromPeriod ?? undefined);
     const surfaceFromOverride = Number(surfaceOverride);
-    const aptSurface = Number.isFinite(surfaceFromOverride) && surfaceFromOverride > 0
-      ? surfaceFromOverride
-      : (aggregates.surfaceMoyenne ? Math.round(aggregates.surfaceMoyenne) : 60);
+    const aptSurface =
+      Number.isFinite(surfaceFromOverride) && surfaceFromOverride > 0
+        ? surfaceFromOverride
+        : aggregates.surfaceMoyenne
+          ? Math.round(aggregates.surfaceMoyenne)
+          : 60;
     return {
       buildingType: "Habitation",
       postalCode: codePostal ?? undefined,
       constructionYear: year,
-      // Surface "type" d'un appartement de la copro — utilisée par les fiches
-      // qui calculent par lot. On la rend éditable depuis le bandeau.
       buildingSurface: aptSurface,
       householdSize: 3,
       mwhCumacPrice: Number.parseFloat(priceStd.replace(",", ".")) || 7,
@@ -149,7 +171,6 @@ export function CeeCoproPostes({
     surfaceOverride,
   ]);
 
-  // Actions par défaut + overrides
   const actionsMerged = useMemo<Record<string, Action>>(() => {
     const dpe = (classeDpeCollective ?? "").toUpperCase();
     const classJump =
@@ -178,34 +199,9 @@ export function CeeCoproPostes({
     return merged;
   }, [classeDpeCollective, actionsOverride]);
 
-  // === Évaluation 2 fois : intermediate + veryModest, et 2 housingTypes =
-  //
-  // On évalue avec housingType="Batiment d'habitation collectif en copropriete"
-  // (pour les fiches purement collectives : BAR-TH-177, BAR-TH-179, etc.) ET
-  // avec housingType="Appartement" (pour les fiches qui n'acceptent pas le
-  // collectif strict mais qu'on veut appliquer par lot dans la copro).
-  // On merge par code, en gardant le meilleur statut (Eligible > Confirmer
-  // > Potentiel > Non éligible).
-  const evalForIncomeAndHousing = useMemo(() => {
-    return (income: "intermediate" | "veryModest"): FullEvaluateResult[] => {
-      const projectCollectif: Project = {
-        ...baseProject,
-        incomeBracket: income,
-        housingType: "Batiment d'habitation collectif en copropriete",
-      };
-      const projectAppt: Project = {
-        ...baseProject,
-        incomeBracket: income,
-        housingType: "Appartement",
-      };
-      const collectif = evaluateAllSheets(projectCollectif, {
-        buildingTypes: ["Habitation"],
-        actions: actionsMerged,
-      });
-      const appt = evaluateAllSheets(projectAppt, {
-        buildingTypes: ["Habitation"],
-        actions: actionsMerged,
-      });
+  // === Double évaluation Appartement + Collectif ========================
+  const evalFor = useMemo(() => {
+    return (income: IncomeKey): FullEvaluateResult[] => {
       const priority: Record<string, number> = {
         Eligible: 0,
         "Eligibilite a confirmer": 1,
@@ -213,37 +209,43 @@ export function CeeCoproPostes({
         "Non eligible": 3,
       };
       const merged = new Map<string, FullEvaluateResult>();
-      for (const r of [...collectif, ...appt]) {
-        const existing = merged.get(r.sheet.code);
-        if (
-          !existing ||
-          (priority[r.evaluation.status] ?? 99) <
-            (priority[existing.evaluation.status] ?? 99)
-        ) {
-          merged.set(r.sheet.code, r);
+      for (const ht of [
+        "Batiment d'habitation collectif en copropriete",
+        "Appartement",
+      ] as const) {
+        const project: Project = {
+          ...baseProject,
+          incomeBracket: income,
+          housingType: ht,
+        };
+        const r = evaluateAllSheets(project, {
+          buildingTypes: ["Habitation"],
+          actions: actionsMerged,
+        });
+        for (const x of r) {
+          const existing = merged.get(x.sheet.code);
+          if (
+            !existing ||
+            (priority[x.evaluation.status] ?? 99) <
+              (priority[existing.evaluation.status] ?? 99)
+          ) {
+            merged.set(x.sheet.code, x);
+          }
         }
       }
       return [...merged.values()];
     };
   }, [baseProject, actionsMerged]);
 
-  const resultsStd = useMemo(
-    () => evalForIncomeAndHousing("intermediate"),
-    [evalForIncomeAndHousing],
-  );
-  const resultsModest = useMemo(
-    () => evalForIncomeAndHousing("veryModest"),
-    [evalForIncomeAndHousing],
-  );
-
-  // Index par code pour zip
+  const resultsStd = useMemo(() => evalFor("intermediate"), [evalFor]);
+  const resultsModest = useMemo(() => evalFor("veryModest"), [evalFor]);
   const modestByCode = useMemo(() => {
     const m = new Map<string, FullEvaluateResult>();
     for (const r of resultsModest) m.set(r.sheet.code, r);
     return m;
   }, [resultsModest]);
 
-  // Filtre : on cache Non éligible + Potentiellement éligible (sur standard)
+  // Garde uniquement éligibles + à confirmer
   const visibleResults = useMemo(
     () =>
       resultsStd.filter(
@@ -254,39 +256,60 @@ export function CeeCoproPostes({
     [resultsStd],
   );
 
-  const grouped = useMemo(
-    () => groupByFamily(visibleResults),
+  // === Cumul panier ====================================================
+  const eligibleCodes = useMemo(
+    () =>
+      new Set(
+        visibleResults
+          .filter((r) => r.evaluation.status === "Eligible")
+          .map((r) => r.sheet.code),
+      ),
     [visibleResults],
   );
 
-  // Si l'utilisateur a coché des fiches → on cumule SA sélection
-  // Sinon → cumul des fiches éligibles par défaut
   const hasSelection = selectedCodes.size > 0;
+  const cumulCodes = hasSelection ? selectedCodes : eligibleCodes;
 
-  const eligibleStdCodes = useMemo(() => {
-    return new Set(
-      visibleResults
-        .filter((r) => r.evaluation.status === "Eligible")
-        .map((r) => r.sheet.code),
-    );
+  const totalsStd = useMemo(
+    () =>
+      sumEstimates(
+        visibleResults.filter((r) => cumulCodes.has(r.sheet.code)),
+      ),
+    [visibleResults, cumulCodes],
+  );
+  const totalsModest = useMemo(
+    () => sumEstimates(resultsModest.filter((r) => cumulCodes.has(r.sheet.code))),
+    [resultsModest, cumulCodes],
+  );
+
+  // Comptage par famille pour les filtres
+  const familyCounts = useMemo(() => {
+    const counts: Record<SheetFamily, number> = {
+      Bouquet: 0,
+      Enveloppe: 0,
+      Thermique: 0,
+      Equipement: 0,
+      Services: 0,
+    };
+    for (const r of visibleResults) counts[r.sheet.family as SheetFamily]++;
+    return counts;
   }, [visibleResults]);
 
-  const cumulCodes = useMemo(() => {
-    if (hasSelection) return selectedCodes;
-    return eligibleStdCodes;
-  }, [hasSelection, selectedCodes, eligibleStdCodes]);
+  const filteredResults = useMemo(
+    () =>
+      familyFilter === "all"
+        ? visibleResults
+        : visibleResults.filter((r) => r.sheet.family === familyFilter),
+    [visibleResults, familyFilter],
+  );
 
-  const totalsStd = useMemo(() => {
-    return sumEstimates(
-      visibleResults.filter((r) => cumulCodes.has(r.sheet.code)),
-    );
-  }, [visibleResults, cumulCodes]);
-
-  const totalsModest = useMemo(() => {
-    const matching = resultsModest.filter((r) => cumulCodes.has(r.sheet.code));
-    return sumEstimates(matching);
-  }, [resultsModest, cumulCodes]);
-
+  // === Actions =========================================================
+  const updateAction = (code: string, key: string, value: unknown) => {
+    setActionsOverride((prev) => ({
+      ...prev,
+      [code]: { ...(prev[code] ?? {}), [key]: value },
+    }));
+  };
   const toggleSelected = (code: string) => {
     setSelectedCodes((prev) => {
       const next = new Set(prev);
@@ -295,22 +318,52 @@ export function CeeCoproPostes({
       return next;
     });
   };
+  const selectAllEligible = () => setSelectedCodes(new Set(eligibleCodes));
+  const clearSelection = () => setSelectedCodes(new Set());
 
-  const selectAllEligible = () => {
-    setSelectedCodes(new Set(eligibleStdCodes));
+  const exportCsv = () => {
+    const lines: string[] = [];
+    lines.push(
+      [
+        "Code",
+        "Titre",
+        "Famille",
+        "Statut",
+        "kWh cumac",
+        "€ Standard",
+        "€ Très modeste",
+      ].join(";"),
+    );
+    for (const r of visibleResults.filter((r) => cumulCodes.has(r.sheet.code))) {
+      const m = modestByCode.get(r.sheet.code)?.evaluation;
+      lines.push(
+        [
+          r.sheet.code,
+          r.sheet.title.replace(/;/g, ","),
+          r.sheet.family,
+          r.evaluation.status,
+          r.evaluation.kwhCumac ?? "",
+          r.evaluation.euroAmount ? Math.round(r.evaluation.euroAmount) : "",
+          m?.euroAmount ? Math.round(m.euroAmount) : "",
+        ].join(";"),
+      );
+    }
+    lines.push("");
+    lines.push(
+      `Total;;;;;${Math.round(totalsStd.euroAmount)};${Math.round(totalsModest.euroAmount)}`,
+    );
+    const blob = new Blob(["﻿" + lines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cee-copro-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const clearSelection = () => {
-    setSelectedCodes(new Set());
-  };
-
-  const eligibleCount = visibleResults.filter(
-    (r) => r.evaluation.status === "Eligible",
-  ).length;
-  const confirmCount = visibleResults.filter(
-    (r) => r.evaluation.status === "Eligibilite a confirmer",
-  ).length;
-
+  // === Rendu ===========================================================
   if (visibleResults.length === 0) {
     return (
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
@@ -319,499 +372,619 @@ export function CeeCoproPostes({
           Aucune fiche éligible ou à confirmer
         </div>
         <p>
-          Vérifie que le DPE collectif est chargé (bouton "Recalculer depuis
-          l'ADEME" plus haut) et que la période de construction est renseignée.
+          Vérifie que le DPE collectif est chargé et que la période de
+          construction est renseignée.
         </p>
       </div>
     );
   }
 
-  const familyOrder: SheetFamily[] = [
-    "Thermique",
-    "Enveloppe",
-    "Equipement",
-    "Services",
-  ];
-
-  const updateAction = (code: string, key: string, value: unknown) => {
-    setActionsOverride((prev) => ({
-      ...prev,
-      [code]: { ...(prev[code] ?? {}), [key]: value },
-    }));
-  };
+  const editingResult = editingCode
+    ? visibleResults.find((r) => r.sheet.code === editingCode)
+    : null;
 
   return (
-    <div className="space-y-3">
-      {/* Bandeau principal */}
-      <div className="rounded-lg bg-gradient-to-br from-emerald-50 to-white p-3 ring-1 ring-emerald-200">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1 text-xs font-bold text-emerald-900">
-            <Coins className="h-3.5 w-3.5" />
-            {hasSelection
-              ? `Mon panier de travaux (${selectedCodes.size} fiches sélectionnées)`
-              : "Estimation CEE — fiches éligibles uniquement"}
+    <div className="space-y-4">
+      {/* ============ HEADER : TOTAUX XL ============ */}
+      <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-emerald-900 to-emerald-700 p-5 text-white shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] opacity-80">
+              <Coins className="h-3 w-3" />
+              {hasSelection
+                ? `Panier · ${selectedCodes.size} fiches sélectionnées`
+                : `Estimation auto · ${eligibleCodes.size} fiches éligibles`}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-6">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider opacity-70">
+                  Revenus standard
+                </div>
+                <div className="text-4xl font-black tabular-nums tracking-tight">
+                  {formatEuros(totalsStd.euroAmount)}
+                </div>
+                <div className="text-[10px] opacity-70">
+                  {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-purple-200">
+                  <Sparkles className="h-3 w-3" />
+                  Très modestes
+                </div>
+                <div className="text-4xl font-black tabular-nums tracking-tight text-purple-100">
+                  {formatEuros(totalsModest.euroAmount)}
+                </div>
+                <div className="text-[10px] text-purple-200/70">
+                  Coup de pouce inclus
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            <StatusPill count={eligibleCount} label="éligibles" tone="emerald" />
-            <StatusPill count={confirmCount} label="à compléter" tone="amber" />
+          <div className="flex flex-col gap-2">
             {hasSelection ? (
               <button
                 type="button"
                 onClick={clearSelection}
-                className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold hover:bg-slate-300"
+                className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider backdrop-blur hover:bg-white/20"
               >
-                Vider la sélection
+                Vider
               </button>
-            ) : eligibleCount > 0 ? (
+            ) : (
               <button
                 type="button"
                 onClick={selectAllEligible}
-                className="rounded-full bg-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-900 hover:bg-emerald-300"
+                className="rounded-full bg-white/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wider backdrop-blur hover:bg-white/25"
               >
                 Tout cocher
               </button>
-            ) : null}
-          </div>
-        </div>
-
-        {totalsStd.kwhCumac > 0 || hasSelection ? (
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-md bg-slate-100 p-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-700">
-                Revenus standard
-              </div>
-              <div className="mt-0.5 text-lg font-black tabular-nums text-slate-900">
-                {formatEuros(totalsStd.euroAmount)}
-              </div>
-              <div className="text-[10px] text-slate-600">
-                {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
-              </div>
-            </div>
-            <div className="rounded-md bg-purple-100 p-2 ring-1 ring-purple-300">
-              <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-purple-700">
-                <Sparkles className="h-3 w-3" />
-                Ménages très modestes
-              </div>
-              <div className="mt-0.5 text-lg font-black tabular-nums text-purple-900">
-                {formatEuros(totalsModest.euroAmount)}
-              </div>
-              <div className="text-[10px] text-purple-700">
-                {Math.round(totalsModest.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac · avec Coups de pouce
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {/* Inputs paramètres copro */}
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="flex flex-col gap-0.5">
-            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Année construction
-            </label>
-            <Input
-              value={yearOverride}
-              onChange={(e) => setYearOverride(e.target.value)}
-              type="number"
-              placeholder={defaultYear ? String(defaultYear) : "ex: 1965"}
-              className="h-7 text-[11px]"
-            />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Surface appart. moy. (m²)
-            </label>
-            <Input
-              value={surfaceOverride}
-              onChange={(e) => setSurfaceOverride(e.target.value)}
-              type="number"
-              placeholder="60"
-              className="h-7 text-[11px]"
-            />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Prix CEE std (€/MWh)
-            </label>
-            <Input
-              value={priceStd}
-              onChange={(e) => setPriceStd(e.target.value)}
-              type="number"
-              step="0.1"
-              className="h-7 text-[11px]"
-            />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Prix CEE précaire (€/MWh)
-            </label>
-            <Input
-              value={pricePrecaire}
-              onChange={(e) => setPricePrecaire(e.target.value)}
-              type="number"
-              step="0.1"
-              className="h-7 text-[11px]"
-            />
-          </div>
-        </div>
-
-        <p className="mt-2 text-[10px] text-emerald-800/70">
-          {hasSelection
-            ? `Cumul des ${selectedCodes.size} fiches cochées ci-dessous.`
-            : "Cumul automatique des fiches éligibles. Coche des fiches dans la liste pour personnaliser ton panier."}
-          {aggregates.energieDominante
-            ? ` · Énergie dominante "${aggregates.energieDominante}"`
-            : ""}
-        </p>
-      </div>
-
-      <p className="text-[10px] italic text-muted-foreground">
-        Audit énergétique recommandé avant engagement. Décisions AG : majorité
-        absolue (art. 24) ou article 25 selon les travaux. Cumul possible avec
-        MaPrimeRénov' Copro selon revenus.
-      </p>
-
-      {/* Liste par famille */}
-      {familyOrder.map((family) => {
-        const items = grouped[family] ?? [];
-        if (items.length === 0) return null;
-        const isOpen = expanded[family] ?? family === "Thermique";
-        return (
-          <div key={family}>
+            )}
             <button
               type="button"
-              onClick={() =>
-                setExpanded((p) => ({ ...p, [family]: !isOpen }))
-              }
-              className="mb-1.5 flex w-full items-center justify-between rounded-md px-1.5 py-1 hover:bg-secondary"
+              onClick={exportCsv}
+              disabled={cumulCodes.size === 0}
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-400 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-950 hover:bg-emerald-300 disabled:opacity-50"
             >
-              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                {familyIcon(family)}
-                {family} · {items.length}
-              </span>
-              {isOpen ? (
-                <ChevronUp className="h-3 w-3 text-muted-foreground" />
-              ) : (
-                <ChevronDown className="h-3 w-3 text-muted-foreground" />
-              )}
+              <Download className="h-3 w-3" /> Export CSV
             </button>
-            {isOpen ? (
-              <div className="space-y-1.5">
-                {items.map((r) => (
-                  <SheetRow
-                    key={r.sheet.code}
-                    resultStd={r}
-                    resultModest={modestByCode.get(r.sheet.code) ?? r}
-                    currentAction={actionsMerged[r.sheet.code] ?? {}}
-                    project={
-                      {
-                        ...baseProject,
-                        incomeBracket: "intermediate",
-                        housingType: "Appartement",
-                      } as Project
-                    }
-                    selected={selectedCodes.has(r.sheet.code)}
-                    onToggleSelected={() => toggleSelected(r.sheet.code)}
-                    onUpdateAction={(key, value) =>
-                      updateAction(r.sheet.code, key, value)
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
           </div>
-        );
-      })}
+        </div>
+        {aggregates.energieDominante ? (
+          <div className="mt-3 inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] backdrop-blur">
+            <Flame className="h-3 w-3" />
+            Énergie dominante &nbsp;<strong>{aggregates.energieDominante}</strong>
+            {aggregates.partPassoires > 0
+              ? ` · ${Math.round(aggregates.partPassoires * 100)}% de lots F/G`
+              : ""}
+          </div>
+        ) : null}
+      </div>
+
+      {/* ============ PARAMÈTRES (collapsible) ============ */}
+      <div className="rounded-xl border border-border bg-card">
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(!settingsOpen)}
+          className="flex w-full items-center justify-between px-4 py-2 text-xs font-bold uppercase tracking-wider hover:bg-secondary/50"
+        >
+          <span className="flex items-center gap-2">
+            <Cog className="h-3.5 w-3.5" />
+            Paramètres de simulation
+          </span>
+          <span className="text-muted-foreground">
+            {settingsOpen ? "▲" : "▼"}
+          </span>
+        </button>
+        {settingsOpen ? (
+          <div className="grid grid-cols-2 gap-3 border-t border-border p-3 sm:grid-cols-4">
+            <ParamInput
+              label="Année construction"
+              value={yearOverride}
+              onChange={setYearOverride}
+              placeholder={defaultYear ? String(defaultYear) : "1965"}
+              type="number"
+            />
+            <ParamInput
+              label="Surface appart. moy. (m²)"
+              value={surfaceOverride}
+              onChange={setSurfaceOverride}
+              placeholder="60"
+              type="number"
+            />
+            <ParamInput
+              label="Prix CEE std (€/MWh)"
+              value={priceStd}
+              onChange={setPriceStd}
+              type="number"
+              step="0.1"
+            />
+            <ParamInput
+              label="Prix CEE précaire (€/MWh)"
+              value={pricePrecaire}
+              onChange={setPricePrecaire}
+              type="number"
+              step="0.1"
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {/* ============ FILTRES PAR FAMILLE ============ */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <FilterChip
+          active={familyFilter === "all"}
+          onClick={() => setFamilyFilter("all")}
+          count={visibleResults.length}
+        >
+          Tous
+        </FilterChip>
+        {FAMILY_ORDER.map((f) =>
+          familyCounts[f] > 0 ? (
+            <FilterChip
+              key={f}
+              active={familyFilter === f}
+              onClick={() => setFamilyFilter(f)}
+              count={familyCounts[f]}
+              icon={familyIcon(f)}
+            >
+              {FAMILY_LABELS[f]}
+            </FilterChip>
+          ) : null,
+        )}
+      </div>
+
+      {/* ============ GRILLE DE CARDS ============ */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {filteredResults.map((r) => (
+          <SheetCard
+            key={r.sheet.code}
+            resultStd={r}
+            resultModest={modestByCode.get(r.sheet.code) ?? r}
+            selected={selectedCodes.has(r.sheet.code)}
+            onToggleSelected={() => toggleSelected(r.sheet.code)}
+            onEdit={() => setEditingCode(r.sheet.code)}
+          />
+        ))}
+      </div>
+
+      {/* ============ DRAWER COMPLÉTER ============ */}
+      {editingResult ? (
+        <CompleteDrawer
+          result={editingResult}
+          project={
+            {
+              ...baseProject,
+              incomeBracket: "intermediate",
+              housingType: "Appartement",
+            } as Project
+          }
+          currentAction={actionsMerged[editingResult.sheet.code] ?? {}}
+          onUpdate={(key, value) =>
+            updateAction(editingResult.sheet.code, key, value)
+          }
+          onClose={() => setEditingCode(null)}
+        />
+      ) : null}
+
+      {/* ============ PANIER FLOTTANT ============ */}
+      {hasSelection ? (
+        <div className="sticky bottom-4 z-30 mx-auto max-w-2xl">
+          <div className="flex items-center justify-between gap-3 rounded-full bg-emerald-600 px-4 py-2 text-white shadow-2xl">
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <Check className="h-4 w-4" />
+              {selectedCodes.size} fiche{selectedCodes.size > 1 ? "s" : ""}
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-base font-black tabular-nums">
+                {formatEuros(totalsStd.euroAmount)}
+              </span>
+              <span className="text-[10px] opacity-80">
+                ou {formatEuros(totalsModest.euroAmount)} très modestes
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-50"
+            >
+              Exporter
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 // === Sub-components ====================================================
 
-function SheetRow({
-  resultStd,
-  resultModest,
-  currentAction,
-  project,
-  selected,
-  onToggleSelected,
-  onUpdateAction,
+function ParamInput({
+  label,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  step,
 }: {
-  resultStd: FullEvaluateResult;
-  resultModest: FullEvaluateResult;
-  currentAction: Action;
-  project: Project;
-  selected: boolean;
-  onToggleSelected: () => void;
-  onUpdateAction: (key: string, value: unknown) => void;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  placeholder?: string;
+  step?: string;
 }) {
-  const { evaluation, sheet } = resultStd;
-  const evMod = resultModest.evaluation;
-  const isEligible = evaluation.status === "Eligible";
-  const [editing, setEditing] = useState(false);
-  const cdp = evMod.coupDePouce ?? evaluation.coupDePouce;
-
-  // Toutes les missing sur les 2 évaluations (std + modeste). On les déduplique.
-  const allMissing = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of evaluation.missing) if (m) set.add(m);
-    for (const m of evMod.missing) if (m) set.add(m);
-    return [...set];
-  }, [evaluation.missing, evMod.missing]);
-
   return (
-    <div
-      className={cn(
-        "rounded-lg border bg-card px-3 py-2 text-xs transition",
-        selected
-          ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-300"
-          : isEligible
-            ? "border-emerald-300 bg-emerald-50/40"
-            : "border-amber-200 bg-amber-50/30",
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-1 items-start gap-2 min-w-0">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggleSelected}
-            disabled={!isEligible}
-            title={
-              isEligible
-                ? "Inclure cette fiche dans le panier"
-                : "Complète d'abord la fiche pour la rendre éligible et l'ajouter au panier"
-            }
-            className="mt-0.5 h-4 w-4 shrink-0 disabled:opacity-30"
-          />
-          <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] font-bold text-muted-foreground">
-              {sheet.code}
-            </span>
-            <span className="text-xs font-bold text-foreground">
-              {sheet.title}
-            </span>
-          </div>
-          {evaluation.calculationLabel ? (
-            <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-              {evaluation.calculationLabel}
-            </p>
-          ) : null}
-          {allMissing.length > 0 ? (
-            <ul className="mt-1 space-y-0.5">
-              {allMissing.slice(0, 5).map((m, i) => (
-                <li key={i} className="text-[10px] text-amber-800">
-                  ⚠ {m}
-                </li>
-              ))}
-              {allMissing.length > 5 ? (
-                <li className="text-[10px] italic text-amber-700">
-                  + {allMissing.length - 5} autres…
-                </li>
-              ) : null}
-            </ul>
-          ) : null}
-          {/* Coup de pouce */}
-          {cdp ? (
-            <div className="mt-1.5 rounded bg-purple-100 px-2 py-1 text-[10px] text-purple-900">
-              <div className="flex items-center gap-1 font-semibold">
-                <Sparkles className="h-3 w-3" />
-                {cdp.name}
-                {cdp.factor ? (
-                  <span className="ml-1 rounded-full bg-purple-700 px-1.5 py-0 text-[9px] font-bold text-white">
-                    ×{cdp.factor}
-                  </span>
-                ) : null}
-                <span
-                  className={cn(
-                    "ml-auto rounded-full px-1.5 py-0 text-[9px] font-bold",
-                    cdp.status === "Eligible" ||
-                      String(cdp.status) === "Applicable"
-                      ? "bg-emerald-600 text-white"
-                      : "bg-amber-500 text-white",
-                  )}
-                >
-                  {String(cdp.status)}
-                </span>
-              </div>
-            </div>
-          ) : null}
-        </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          {/* Deux colonnes de montants */}
-          <div className="grid grid-cols-2 gap-1 text-right">
-            <div>
-              <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-600">
-                Standard
-              </div>
-              <div className="text-sm font-black tabular-nums text-slate-900">
-                {formatEuros(evaluation.euroAmount)}
-              </div>
-              <div className="text-[9px] tabular-nums text-slate-500">
-                {formatKwh(evaluation.kwhCumac)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[9px] font-semibold uppercase tracking-wider text-purple-700">
-                Très modeste
-              </div>
-              <div className="text-sm font-black tabular-nums text-purple-900">
-                {formatEuros(evMod.euroAmount)}
-              </div>
-              <div className="text-[9px] tabular-nums text-purple-600">
-                {formatKwh(evMod.kwhCumac)}
-              </div>
-            </div>
-          </div>
-          <StatusBadge status={evaluation.status} />
-          {allMissing.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => setEditing(!editing)}
-              className="flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-200"
-            >
-              <Pencil className="h-2.5 w-2.5" />
-              {editing ? "Fermer" : "Compléter"}
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {editing ? (
-        <ActionEditor
-          code={sheet.code}
-          project={project}
-          currentAction={currentAction}
-          onUpdate={onUpdateAction}
-        />
-      ) : null}
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type}
+        placeholder={placeholder}
+        step={step}
+        className="h-8 text-xs"
+      />
     </div>
   );
 }
 
-/**
- * Mini formulaire pour compléter une fiche "à confirmer", basé sur le
- * catalogue exact des `fields` portés depuis sheets.js source.
- *
- * Plus de fallback texte libre : chaque champ a un type et des options
- * connus du moteur, donc la saisie déclenche bien la validation.
- */
-function ActionEditor({
-  code,
+function FilterChip({
+  active,
+  onClick,
+  count,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  count: number;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition",
+        active
+          ? "bg-foreground text-background"
+          : "bg-secondary text-foreground hover:bg-secondary/70",
+      )}
+    >
+      {icon}
+      {children}
+      <span
+        className={cn(
+          "rounded-full px-1.5 py-0 text-[9px] font-bold tabular-nums",
+          active ? "bg-background/20 text-background" : "bg-foreground/10",
+        )}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function SheetCard({
+  resultStd,
+  resultModest,
+  selected,
+  onToggleSelected,
+  onEdit,
+}: {
+  resultStd: FullEvaluateResult;
+  resultModest: FullEvaluateResult;
+  selected: boolean;
+  onToggleSelected: () => void;
+  onEdit: () => void;
+}) {
+  const { evaluation, sheet } = resultStd;
+  const evMod = resultModest.evaluation;
+  const isEligible = evaluation.status === "Eligible";
+  const isConfirm = evaluation.status === "Eligibilite a confirmer";
+  const family = sheet.family as SheetFamily;
+  const cdp = evMod.coupDePouce ?? evaluation.coupDePouce;
+
+  return (
+    <div
+      className={cn(
+        "group relative flex flex-col rounded-xl border bg-card p-4 transition hover:shadow-md",
+        selected
+          ? "border-emerald-500 ring-2 ring-emerald-300"
+          : isEligible
+            ? "border-border"
+            : "border-amber-200 bg-amber-50/30",
+      )}
+    >
+      {/* Header card */}
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className={cn("rounded-lg p-1.5", familyBg(family))}>
+            {familyIcon(family)}
+          </div>
+          <div>
+            <div className="font-mono text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+              {sheet.code}
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              {FAMILY_LABELS[family]}
+            </div>
+          </div>
+        </div>
+        {isEligible ? (
+          <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+            Éligible
+          </span>
+        ) : isConfirm ? (
+          <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+            À compléter
+          </span>
+        ) : null}
+      </div>
+
+      {/* Titre */}
+      <h3 className="mb-3 line-clamp-2 min-h-[2.5rem] text-sm font-bold leading-tight">
+        {sheet.title}
+      </h3>
+
+      {/* Montants */}
+      <div className="mb-3 grid grid-cols-2 gap-2 border-y border-border py-2.5">
+        <div>
+          <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Standard
+          </div>
+          <div className="text-base font-black tabular-nums">
+            {isEligible && evaluation.euroAmount != null
+              ? formatEurosShort(evaluation.euroAmount)
+              : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wider text-purple-700">
+            <Sparkles className="h-2.5 w-2.5" />
+            Très modeste
+          </div>
+          <div className="text-base font-black tabular-nums text-purple-900">
+            {isEligible && evMod.euroAmount != null
+              ? formatEurosShort(evMod.euroAmount)
+              : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Coup de pouce */}
+      {cdp && cdp.factor && cdp.factor > 1 ? (
+        <div className="mb-3 inline-flex items-center gap-1 self-start rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-bold text-purple-900">
+          <Sparkles className="h-2.5 w-2.5" />
+          Coup de pouce ×{cdp.factor}
+        </div>
+      ) : null}
+
+      {/* kWh cumac */}
+      {isEligible && evaluation.kwhCumac != null ? (
+        <div className="mb-3 text-[10px] text-muted-foreground">
+          {Math.round(evaluation.kwhCumac).toLocaleString("fr-FR")} kWh cumac (standard)
+        </div>
+      ) : null}
+
+      {/* Actions */}
+      <div className="mt-auto flex items-center gap-2">
+        {isEligible ? (
+          <button
+            type="button"
+            onClick={onToggleSelected}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1 rounded-md px-3 py-1.5 text-[11px] font-bold transition",
+              selected
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200",
+            )}
+          >
+            {selected ? (
+              <>
+                <Check className="h-3 w-3" /> Dans le panier
+              </>
+            ) : (
+              <>
+                <Plus className="h-3 w-3" /> Ajouter au panier
+              </>
+            )}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-600"
+          >
+            <Pencil className="h-3 w-3" /> Compléter
+          </button>
+        )}
+        {isEligible && SHEET_FIELDS[sheet.code] ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="rounded-md border border-border bg-background px-2 py-1.5 text-[11px] hover:bg-secondary"
+            title="Affiner les paramètres"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function CompleteDrawer({
+  result,
   project,
   currentAction,
   onUpdate,
+  onClose,
 }: {
-  code: string;
+  result: FullEvaluateResult;
   project: Project;
   currentAction: Action;
   onUpdate: (key: string, value: unknown) => void;
+  onClose: () => void;
 }) {
-  const allFields = SHEET_FIELDS[code];
-  if (!allFields || allFields.length === 0) {
-    return (
-      <div className="mt-2 rounded-md bg-slate-100 p-2 text-[10px] italic text-slate-700">
-        Saisie détaillée non disponible pour cette fiche dans le simulateur
-        rapide. Utilise la page complète /simulateur-cee pour ce cas.
-      </div>
-    );
-  }
-
-  // Filtre les fields actifs (selon showWhen)
-  const visibleFields = allFields.filter((f) => {
-    if (!f.showWhen) return true;
-    try {
-      return f.showWhen(currentAction, project);
-    } catch {
-      return true;
-    }
-  });
-
+  const { evaluation, sheet } = result;
+  const allFields = SHEET_FIELDS[sheet.code];
+  const visibleFields = useMemo(() => {
+    if (!allFields) return [];
+    return allFields.filter((f) => {
+      if (!f.showWhen) return true;
+      try {
+        return f.showWhen(currentAction, project);
+      } catch {
+        return true;
+      }
+    });
+  }, [allFields, currentAction, project]);
   const sheetFields = visibleFields.filter((f) => f.group !== "coupDePouce");
   const cdpFields = visibleFields.filter((f) => f.group === "coupDePouce");
 
   return (
-    <div className="mt-2 space-y-2">
-      <FieldGroup
-        title="Compléter pour calculer"
-        tone="amber"
-        fields={sheetFields}
-        currentAction={currentAction}
-        onUpdate={onUpdate}
-      />
-      {cdpFields.length > 0 ? (
-        <FieldGroup
-          title="Coup de pouce — conditions"
-          tone="purple"
-          fields={cdpFields}
-          currentAction={currentAction}
-          onUpdate={onUpdate}
-        />
-      ) : null}
+    <div className="fixed inset-0 z-50 flex" onClick={onClose}>
+      <div className="flex-1 bg-black/50 backdrop-blur-sm" />
+      <div
+        className="flex h-full w-full max-w-md flex-col bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-border p-4">
+          <div>
+            <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              {sheet.code}
+            </div>
+            <h3 className="mt-1 text-sm font-bold">{sheet.title}</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-muted-foreground hover:bg-secondary"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {!allFields || allFields.length === 0 ? (
+            <p className="text-[11px] italic text-muted-foreground">
+              Saisie détaillée non disponible pour cette fiche dans le simulateur
+              rapide. Utilise la page complète /simulateur-cee.
+            </p>
+          ) : (
+            <>
+              {sheetFields.length > 0 ? (
+                <FieldGroup
+                  title="Caractéristiques du projet"
+                  fields={sheetFields}
+                  currentAction={currentAction}
+                  onUpdate={onUpdate}
+                />
+              ) : null}
+              {cdpFields.length > 0 ? (
+                <div className="mt-4">
+                  <FieldGroup
+                    title="Coup de pouce — conditions"
+                    fields={cdpFields}
+                    currentAction={currentAction}
+                    onUpdate={onUpdate}
+                    purple
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+          {evaluation.missing.length > 0 ? (
+            <div className="mt-4 rounded-md bg-amber-50 p-2 text-[11px] text-amber-900">
+              <div className="mb-1 font-semibold">Champs encore manquants :</div>
+              <ul className="space-y-0.5">
+                {evaluation.missing.map((m, i) => (
+                  <li key={i}>⚠ {m}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {evaluation.kwhCumac != null ? (
+            <div className="mt-4 rounded-md bg-emerald-50 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                Résultat actuel
+              </div>
+              <div className="mt-1 text-2xl font-black tabular-nums text-emerald-900">
+                {formatEuros(evaluation.euroAmount)}
+              </div>
+              <div className="text-[10px] text-emerald-800/80">
+                {Math.round(evaluation.kwhCumac).toLocaleString("fr-FR")} kWh cumac
+              </div>
+              {evaluation.calculationLabel ? (
+                <p className="mt-1 font-mono text-[10px] text-emerald-800/70">
+                  {evaluation.calculationLabel}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="border-t border-border p-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-md bg-primary px-3 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90"
+          >
+            Fermer
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function FieldGroup({
   title,
-  tone,
   fields,
   currentAction,
   onUpdate,
+  purple,
 }: {
   title: string;
-  tone: "amber" | "purple";
   fields: SheetField[];
   currentAction: Action;
   onUpdate: (key: string, value: unknown) => void;
+  purple?: boolean;
 }) {
-  if (fields.length === 0) return null;
-  const bg = tone === "amber" ? "bg-amber-100/60" : "bg-purple-100/50";
-  const titleCol = tone === "amber" ? "text-amber-900" : "text-purple-900";
-  const inputBorder = tone === "amber" ? "border-amber-300" : "border-purple-300";
   return (
-    <div className={cn("rounded-md p-2", bg)}>
-      <div
+    <div>
+      <h4
         className={cn(
-          "mb-1.5 text-[10px] font-bold uppercase tracking-wider",
-          titleCol,
+          "mb-2 text-[10px] font-bold uppercase tracking-wider",
+          purple ? "text-purple-700" : "text-muted-foreground",
         )}
       >
         {title}
-      </div>
-      <div className="grid grid-cols-2 gap-2">
+      </h4>
+      <div className="space-y-2">
         {fields.map((field) => (
-          <div
-            key={field.name}
-            className={cn(
-              "flex flex-col gap-0.5",
-              field.type === "checkbox" ? "col-span-2 flex-row items-center" : "",
-            )}
-          >
+          <div key={field.name}>
             {field.type === "checkbox" ? (
-              <label className="flex items-center gap-2 text-[10px] font-semibold">
+              <label className="flex items-center gap-2 text-xs">
                 <input
                   type="checkbox"
                   checked={Boolean(currentAction[field.name])}
                   onChange={(e) => onUpdate(field.name, e.target.checked)}
-                  className="h-3.5 w-3.5"
+                  className="h-4 w-4"
                 />
-                <span className={titleCol}>{field.label}</span>
+                <span>{field.label}</span>
               </label>
             ) : (
               <>
-                <label className={cn("text-[9px] font-semibold", titleCol)}>
+                <label className="text-[10px] font-medium text-muted-foreground">
                   {field.label}
                 </label>
                 {field.type === "select" ? (
                   <select
                     value={String(currentAction[field.name] ?? "")}
                     onChange={(e) => onUpdate(field.name, e.target.value)}
-                    className={cn(
-                      "h-7 rounded-md border bg-white px-2 text-[11px]",
-                      inputBorder,
-                    )}
+                    className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
                   >
                     {(field.options ?? []).map((opt) => (
                       <option key={opt} value={opt}>
@@ -824,7 +997,7 @@ function FieldGroup({
                     value={String(currentAction[field.name] ?? "")}
                     onChange={(e) => onUpdate(field.name, e.target.value)}
                     type={field.type === "number" ? "number" : "text"}
-                    className={cn("h-7 text-[11px]", inputBorder)}
+                    className="mt-0.5 h-8 text-xs"
                   />
                 )}
               </>
@@ -836,64 +1009,35 @@ function FieldGroup({
   );
 }
 
-// === Utils communs ======================================================
-
-function StatusPill({
-  count,
-  label,
-  tone,
-}: {
-  count: number;
-  label: string;
-  tone: "emerald" | "amber" | "slate";
-}) {
-  if (count === 0) return null;
-  const cls =
-    tone === "emerald"
-      ? "bg-emerald-600 text-white"
-      : tone === "amber"
-        ? "bg-amber-500 text-white"
-        : "bg-slate-400 text-white";
-  return (
-    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", cls)}>
-      {count} {label}
-    </span>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "Eligible"
-      ? "bg-emerald-600 text-white"
-      : status === "Eligibilite a confirmer"
-        ? "bg-amber-500 text-white"
-        : "bg-slate-400 text-white";
-  const label =
-    status === "Eligibilite a confirmer" ? "À compléter" : status;
-  return (
-    <span
-      className={cn(
-        "rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
-        cls,
-      )}
-    >
-      {label}
-    </span>
-  );
-}
+// === Utils ===============================================================
 
 function familyIcon(f: SheetFamily) {
   switch (f) {
     case "Enveloppe":
-      return <Shield className="h-3 w-3 text-blue-600" />;
+      return <Shield className="h-3.5 w-3.5 text-blue-600" />;
     case "Thermique":
-      return <Flame className="h-3 w-3 text-orange-600" />;
+      return <Flame className="h-3.5 w-3.5 text-orange-600" />;
     case "Equipement":
-      return <Cog className="h-3 w-3 text-slate-600" />;
+      return <Cog className="h-3.5 w-3.5 text-slate-600" />;
     case "Services":
-      return <Wind className="h-3 w-3 text-sky-600" />;
+      return <Wind className="h-3.5 w-3.5 text-sky-600" />;
     case "Bouquet":
-      return <Layers className="h-3 w-3 text-emerald-700" />;
+      return <Layers className="h-3.5 w-3.5 text-emerald-700" />;
+  }
+}
+
+function familyBg(f: SheetFamily): string {
+  switch (f) {
+    case "Enveloppe":
+      return "bg-blue-50";
+    case "Thermique":
+      return "bg-orange-50";
+    case "Equipement":
+      return "bg-slate-100";
+    case "Services":
+      return "bg-sky-50";
+    case "Bouquet":
+      return "bg-emerald-50";
   }
 }
 
@@ -906,9 +1050,12 @@ function formatEuros(v: number | null): string {
   }).format(v);
 }
 
-function formatKwh(v: number | null): string {
-  if (v == null) return "—";
-  return Math.round(v).toLocaleString("fr-FR");
+function formatEurosShort(v: number): string {
+  if (v >= 1000) {
+    const k = v / 1000;
+    return `${k.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} k€`;
+  }
+  return `${Math.round(v)} €`;
 }
 
 function mapPeriodToYear(period: string | null): number | null {
