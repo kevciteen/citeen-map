@@ -6,8 +6,11 @@ import { MaisonsAddressSearch } from "@/components/crm/maisons-address-search";
 import { MaisonsZoneSearch } from "@/components/crm/maisons-zone-search";
 
 type Tab = "address" | "zone";
+export type BatimentType = "maison" | "appartement";
 
-export function MaisonsModule() {
+export function MaisonsModule({
+  typeBatiment = "maison",
+}: { typeBatiment?: BatimentType } = {}) {
   const [tab, setTab] = useState<Tab>("address");
 
   return (
@@ -21,7 +24,11 @@ export function MaisonsModule() {
         </TabBtn>
       </div>
       <div className="flex-1 overflow-hidden">
-        {tab === "address" ? <MaisonsAddressSearch /> : <MaisonsZoneSearch />}
+        {tab === "address" ? (
+          <MaisonsAddressSearch typeBatiment={typeBatiment} />
+        ) : (
+          <MaisonsZoneSearch typeBatiment={typeBatiment} />
+        )}
       </div>
     </div>
   );

@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  Home, ExternalLink, Plus, X, Calendar, Ruler, Zap, Flame,
-  Snowflake, Wind, Wallet, Building, Shield, FileText, Loader2,
+  Home, Building, ExternalLink, Plus, X, Calendar, Ruler, Zap, Flame,
+  Snowflake, Wind, Wallet, Shield, FileText, Loader2,
   Banknote, TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -140,15 +140,21 @@ function monthsSince(dateStr: string | null): number | null {
   return Math.floor((Date.now() - t) / (30.4 * 24 * 3600 * 1000));
 }
 
+type BatimentType = "maison" | "appartement";
+
 export function MaisonDetailSheet({
   maison,
   trigger,
   onAdded,
+  typeBatiment = "maison",
 }: {
   maison: MaisonDpe;
   trigger: React.ReactNode;
   onAdded?: () => void;
+  typeBatiment?: BatimentType;
 }) {
+  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
+  const typeLabel = typeBatiment === "appartement" ? "Appartement" : "Maison";
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [dvf, setDvf] = useState<DvfResponse | null>(null);
@@ -165,11 +171,11 @@ export function MaisonDetailSheet({
     params.set("lat", String(maison.lat));
     params.set("lon", String(maison.lon));
     params.set("dist", "30");
-    params.set("type", "maison");
+    params.set("type", typeBatiment);
     if (maison.address.housenumber)
       params.set("housenumber", maison.address.housenumber);
     if (maison.address.street) params.set("street", maison.address.street);
-    fetch(`/api/maisons/dvf?${params.toString()}`)
+    fetch(`/api/${apiSegment}/dvf?${params.toString()}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((j: DvfResponse) => {
         if (!aborted) setDvf(j);
@@ -183,7 +189,7 @@ export function MaisonDetailSheet({
     return () => {
       aborted = true;
     };
-  }, [open, maison.lat, maison.lon, maison.address.housenumber, maison.address.street, dvf]);
+  }, [open, maison.lat, maison.lon, maison.address.housenumber, maison.address.street, dvf, apiSegment, typeBatiment]);
 
   const lastSaleMonths = monthsSince(dvf?.stats.last_sale_date ?? null);
   const isRecentSale = lastSaleMonths != null && lastSaleMonths <= 24;
@@ -195,13 +201,13 @@ export function MaisonDetailSheet({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          customLabel: `Maison · ${maison.address.label}`,
+          customLabel: `${typeLabel} · ${maison.address.label}`,
           customAddress: maison.address.label,
           customLat: maison.lat,
           customLon: maison.lon,
           stage: "to_contact",
           priority: 2,
-          tags: ["maison", `dpe-${maison.classe}`, `ges-${maison.ges}`],
+          tags: [typeBatiment, `dpe-${maison.classe}`, `ges-${maison.ges}`],
         }),
       });
       if (r.ok || r.status === 409) {
@@ -219,9 +225,11 @@ export function MaisonDetailSheet({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[820px] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl bg-card shadow-2xl">
-          <Dialog.Title className="sr-only">Fiche maison détaillée</Dialog.Title>
+          <Dialog.Title className="sr-only">
+            Fiche {typeLabel.toLowerCase()} détaillée
+          </Dialog.Title>
           <Dialog.Description className="sr-only">
-            Détails du DPE de la maison à l'adresse {maison.address.label}
+            Détails du DPE de {typeBatiment === "appartement" ? "l'appartement" : "la maison"} à l'adresse {maison.address.label}
           </Dialog.Description>
 
           {/* HEADER coloré DPE */}
@@ -236,7 +244,11 @@ export function MaisonDetailSheet({
             </Dialog.Close>
             <div className="flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-                <Home className="h-6 w-6" />
+                {typeBatiment === "appartement" ? (
+                  <Building className="h-6 w-6" />
+                ) : (
+                  <Home className="h-6 w-6" />
+                )}
               </div>
               <div className="flex-1">
                 <h2 className="text-xl font-black tracking-tight">
@@ -262,7 +274,7 @@ export function MaisonDetailSheet({
                   {isRecentSale ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600/90 px-2 py-0.5 text-[10px] font-bold backdrop-blur">
                       <TrendingUp className="h-3 w-3" />
-                      Vendue il y a {lastSaleMonths}&nbsp;mois
+                      {typeBatiment === "appartement" ? "Vendu" : "Vendue"} il y a {lastSaleMonths}&nbsp;mois
                     </span>
                   ) : null}
                 </div>

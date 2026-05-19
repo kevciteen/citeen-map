@@ -72,7 +72,15 @@ const DPE_COLORS: Record<string, string> = {
   NC: "#94a3b8",
 };
 
-export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
+type BatimentType = "maison" | "appartement";
+
+export function MaisonsMap({
+  items,
+  typeBatiment = "maison",
+}: {
+  items: MaisonDpe[];
+  typeBatiment?: BatimentType;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const [ready, setReady] = useState(false);
@@ -313,6 +321,7 @@ export function MaisonsMap({ items }: { items: MaisonDpe[] }) {
         <MaisonDetailSheet
           key={`${selected.numero_dpe}-${sheetTrigger}`}
           maison={selected}
+          typeBatiment={typeBatiment}
           trigger={<button id="__maison_sheet_trigger" style={{ display: "none" }} />}
         />
       ) : null}

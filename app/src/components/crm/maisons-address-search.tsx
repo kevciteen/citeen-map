@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, MapPin, Home, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
+import { Loader2, MapPin, Home, Building, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,7 +109,18 @@ const DPE_GRADIENT: Record<string, string> = {
   NC: "linear-gradient(135deg, #94a3b8 0%, #475569 100%)",
 };
 
-export function MaisonsAddressSearch() {
+type BatimentType = "maison" | "appartement";
+
+export function MaisonsAddressSearch({
+  typeBatiment = "maison",
+}: { typeBatiment?: BatimentType } = {}) {
+  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
+  const typeLabel = typeBatiment === "appartement" ? "Appartement" : "Maison";
+  const examplePlaceholder =
+    typeBatiment === "appartement"
+      ? "10 avenue Foch 75116 Paris"
+      : "12 rue Voltaire 75011 Paris";
+
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -143,7 +154,7 @@ export function MaisonsAddressSearch() {
     setResult(null);
     setSuggestOpen(false);
     try {
-      const r = await fetch(`/api/maisons/lookup?q=${encodeURIComponent(q)}`);
+      const r = await fetch(`/api/${apiSegment}/lookup?q=${encodeURIComponent(q)}`);
       const j = await r.json();
       if (r.ok) setResult(j);
       else toast.error(j?.error || "Erreur");
@@ -159,13 +170,13 @@ export function MaisonsAddressSearch() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          customLabel: `Maison · ${m.address.label}`,
+          customLabel: `${typeLabel} · ${m.address.label}`,
           customAddress: m.address.label,
           customLat: m.lat ?? result?.banResolved?.lat,
           customLon: m.lon ?? result?.banResolved?.lon,
           stage: "to_contact",
           priority: 2,
-          tags: ["maison", `dpe-${m.classe}`],
+          tags: [typeBatiment, `dpe-${m.classe}`],
         }),
       });
       if (r.ok || r.status === 409) toast.success("Ajouté au pipeline");
@@ -181,7 +192,7 @@ export function MaisonsAddressSearch() {
       <Card>
         <CardContent className="p-5">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Rechercher une maison
+            Rechercher {typeBatiment === "appartement" ? "un appartement" : "une maison"}
           </p>
           <div className="relative">
             <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -195,7 +206,7 @@ export function MaisonsAddressSearch() {
               }}
               onFocus={() => suggestions.length && setSuggestOpen(true)}
               onBlur={() => setTimeout(() => setSuggestOpen(false), 180)}
-              placeholder="Adresse complète : 12 rue Voltaire 75011 Paris"
+              placeholder={`Adresse complète : ${examplePlaceholder}`}
               className="pl-9 pr-32"
             />
             {loadingSuggest ? (
@@ -239,7 +250,8 @@ export function MaisonsAddressSearch() {
 
           <p className="mt-2 text-[11px] text-muted-foreground">
             On interroge BAN + cadastre IGN + ADEME pour trouver le DPE officiel
-            de la maison à cette adresse. Filtrage strict sur type=maison.
+            {typeBatiment === "appartement" ? " de l'appartement" : " de la maison"} à cette adresse.
+            Filtrage strict sur type={typeBatiment}.
           </p>
         </CardContent>
       </Card>
@@ -287,7 +299,7 @@ export function MaisonsAddressSearch() {
                 value={`${result.totalDpeFound}`}
               />
               <Row
-                label="DPE maison strictement matchés"
+                label={`DPE ${typeBatiment === "appartement" ? "appartement" : "maison"} strictement matchés`}
                 value={`${result.matched.length}`}
                 strong
               />
@@ -301,7 +313,7 @@ export function MaisonsAddressSearch() {
                 <AlertCircle className="h-5 w-5 shrink-0 text-amber-700" />
                 <div>
                   <p className="text-sm font-bold text-amber-900">
-                    Aucun DPE maison trouvé pour cette adresse
+                    Aucun DPE {typeBatiment === "appartement" ? "appartement" : "maison"} trouvé pour cette adresse
                   </p>
                   <ul className="mt-2 space-y-1 text-[11px] text-amber-800">
                     {result.notes.map((n, i) => (
@@ -313,7 +325,14 @@ export function MaisonsAddressSearch() {
             </Card>
           ) : (
             result.matched.map((m, i) => (
-              <MaisonResultCard key={m.numero_dpe} maison={m} index={i} onAdd={addToPipeline} loading={adding === i} />
+              <MaisonResultCard
+                key={m.numero_dpe}
+                maison={m}
+                index={i}
+                onAdd={addToPipeline}
+                loading={adding === i}
+                typeBatiment={typeBatiment}
+              />
             ))
           )}
         </>
@@ -341,13 +360,16 @@ function MaisonResultCard({
   index,
   onAdd,
   loading,
+  typeBatiment = "maison",
 }: {
   maison: MaisonDpe;
   index: number;
   onAdd: (m: MaisonDpe, i: number) => void;
   loading: boolean;
+  typeBatiment?: BatimentType;
 }) {
   const [dvf, setDvf] = useState<DvfSummary | null>(null);
+  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
 
   useEffect(() => {
     if (m.lat == null || m.lon == null) return;
@@ -356,10 +378,10 @@ function MaisonResultCard({
     p.set("lat", String(m.lat));
     p.set("lon", String(m.lon));
     p.set("dist", "30");
-    p.set("type", "maison");
+    p.set("type", typeBatiment);
     if (m.address.housenumber) p.set("housenumber", m.address.housenumber);
     if (m.address.street) p.set("street", m.address.street);
-    fetch(`/api/maisons/dvf?${p.toString()}`)
+    fetch(`/api/${apiSegment}/dvf?${p.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (aborted || !j) return;
@@ -381,7 +403,7 @@ function MaisonResultCard({
     return () => {
       aborted = true;
     };
-  }, [m.lat, m.lon, m.address.housenumber, m.address.street]);
+  }, [m.lat, m.lon, m.address.housenumber, m.address.street, apiSegment, typeBatiment]);
 
   const isRecent = dvf?.monthsSince != null && dvf.monthsSince <= 24;
 
@@ -394,7 +416,11 @@ function MaisonResultCard({
         <div>
           <div className="flex items-start gap-3">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-              <Home className="h-6 w-6" />
+              {typeBatiment === "appartement" ? (
+                <Building className="h-6 w-6" />
+              ) : (
+                <Home className="h-6 w-6" />
+              )}
             </div>
             <div>
               <h2 className="text-xl font-black tracking-tight">
@@ -418,7 +444,7 @@ function MaisonResultCard({
                     className="bg-emerald-500/90 text-white"
                   >
                     <TrendingUp className="mr-1 h-3 w-3" />
-                    Vendue il y a {dvf?.monthsSince}&nbsp;mois
+                    {typeBatiment === "appartement" ? "Vendu" : "Vendue"} il y a {dvf?.monthsSince}&nbsp;mois
                   </Badge>
                 ) : null}
               </div>
@@ -478,6 +504,7 @@ function MaisonResultCard({
             </Button>
             <MaisonDetailSheet
               maison={m}
+              typeBatiment={typeBatiment}
               trigger={
                 <button className="flex items-center gap-1 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-foreground hover:bg-white/90">
                   <Eye className="h-3 w-3" /> Détail complet

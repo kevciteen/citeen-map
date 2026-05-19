@@ -7,6 +7,7 @@ import {
   Kanban,
   LayoutDashboard,
   Building2,
+  Building,
   Home,
   Settings,
   FileDown,
@@ -29,6 +30,7 @@ const items = [
   { href: "/prospects", label: "Pipeline", icon: Kanban },
   { href: "/copros", label: "Copropriétés", icon: Building2 },
   { href: "/maisons", label: "Maisons individuelles", icon: Home },
+  { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/syndics", label: "Syndics", icon: Users },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];

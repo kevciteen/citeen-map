@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Loader2, Search, Home, ExternalLink, Plus, Download, Eye, SlidersHorizontal, List, Map as MapIcon } from "lucide-react";
+import { Loader2, Search, Home, Building, ExternalLink, Plus, Download, Eye, SlidersHorizontal, List, Map as MapIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -83,9 +83,20 @@ export type ZoneSearchEvent = {
   total: number;
 };
 
+type BatimentType = "maison" | "appartement";
+
 export function MaisonsZoneSearch({
   onResults,
-}: { onResults?: (e: ZoneSearchEvent) => void } = {}) {
+  typeBatiment = "maison",
+}: {
+  onResults?: (e: ZoneSearchEvent) => void;
+  typeBatiment?: BatimentType;
+} = {}) {
+  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
+  const typeLabel = typeBatiment === "appartement" ? "Appartement" : "Maison";
+  const typeLabelPluralFr =
+    typeBatiment === "appartement" ? "appartements" : "maisons";
+
   const [cp, setCp] = useState("");
   const [commune, setCommune] = useState("");
   const [dpeClasses, setDpeClasses] = useState<Set<string>>(new Set(["F", "G"]));
@@ -158,7 +169,7 @@ export function MaisonsZoneSearch({
       if (dpeAncien.trim()) sp.set("dpeAncienAnnees", dpeAncien.trim());
       sp.set("limit", "500");
 
-      const r = await fetch(`/api/maisons/search?${sp}`);
+      const r = await fetch(`/api/${apiSegment}/search?${sp}`);
       const j = await r.json();
       if (r.ok) {
         setItems(j.items);
@@ -182,13 +193,13 @@ export function MaisonsZoneSearch({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            customLabel: `Maison · ${m.address.label}`,
+            customLabel: `${typeLabel} · ${m.address.label}`,
             customAddress: m.address.label,
             customLat: m.lat,
             customLon: m.lon,
             stage: "to_contact",
             priority: 2,
-            tags: ["maison", `dpe-${m.classe}`],
+            tags: [typeBatiment, `dpe-${m.classe}`],
           }),
         });
         if (r.ok || r.status === 409) ok++;
@@ -217,7 +228,7 @@ export function MaisonsZoneSearch({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `maisons-${cp || commune}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `${typeLabelPluralFr}-${cp || commune}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -345,7 +356,7 @@ export function MaisonsZoneSearch({
           {loading ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : null}
           <span>
             <span className="font-bold text-foreground">{items.length.toLocaleString("fr-FR")}</span>{" "}
-            résultats affichés · {total.toLocaleString("fr-FR")} maisons matchées au total
+            résultats affichés · {total.toLocaleString("fr-FR")} {typeLabelPluralFr} {typeBatiment === "appartement" ? "matchés" : "matchées"} au total
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -412,12 +423,13 @@ export function MaisonsZoneSearch({
                   maison={m}
                   checked={selected.has(m.numero_dpe)}
                   onToggle={() => toggleSelected(m.numero_dpe)}
+                  typeBatiment={typeBatiment}
                 />
               ))}
             </div>
           </div>
         ) : (
-          <MaisonsMap items={items} />
+          <MaisonsMap items={items} typeBatiment={typeBatiment} />
         )}
       </div>
     </div>
@@ -428,16 +440,22 @@ function MaisonRow({
   maison: m,
   checked,
   onToggle,
+  typeBatiment = "maison",
 }: {
   maison: MaisonDpe;
   checked: boolean;
   onToggle: () => void;
+  typeBatiment?: BatimentType;
 }) {
   return (
     <div className={cn("flex items-center gap-3 rounded-lg border border-border bg-card p-3", checked && "border-primary bg-primary/5")}>
       <input type="checkbox" checked={checked} onChange={onToggle} className="h-4 w-4" />
       <DpeBadge classe={m.classe} size="md" />
-      <Home className="h-3.5 w-3.5 text-muted-foreground" />
+      {typeBatiment === "appartement" ? (
+        <Building className="h-3.5 w-3.5 text-muted-foreground" />
+      ) : (
+        <Home className="h-3.5 w-3.5 text-muted-foreground" />
+      )}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">
           {m.address.housenumber} {m.address.street}
@@ -472,6 +490,7 @@ function MaisonRow({
       </div>
       <MaisonDetailSheet
         maison={m}
+        typeBatiment={typeBatiment}
         trigger={
           <button
             className="flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium hover:bg-secondary"

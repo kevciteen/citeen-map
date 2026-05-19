@@ -1,23 +1,27 @@
 /**
- * Service maisons individuelles — couple BAN + ADEME + Cadastre IGN.
+ * Service logements individuels (maisons + appartements) — couple BAN + ADEME
+ * + Cadastre IGN.
  *
  * Différence avec le service copro :
  *   - Pas de référentiel pré‑importé (search‑driven, à la demande)
- *   - 1 maison = 1 DPE (pas de moyenne pondérée à faire)
- *   - Filtre strict ADEME sur type_batiment = "maison"
+ *   - 1 logement = 1 DPE (pas de moyenne pondérée à faire)
+ *   - Filtre strict ADEME sur type_batiment = "maison" ou "appartement"
  *   - Cadastre pour confirmer que le DPE est bien sur la même parcelle que l'adresse
+ *
+ * Le même service alimente les modules /maisons et /appartements via le
+ * paramètre `typeBatiment` ("maison" par défaut pour préserver la rétro-compat).
  */
 import { fetchAdemeDpeAround, type AdemeRecord } from "./ademe";
 import { ADEME_DPE_LINES_URL } from "./ademe-constants";
 import { geocodeAddress } from "./ban";
 import { getParcelByPoint, type Parcelle } from "./cadastre";
 
-const MAISON_TYPES = new Set([
-  "maison",
-  "maison_individuelle",
-  "maison individuelle",
-  "MI",
-]);
+export type BatimentType = "maison" | "appartement";
+
+const TYPE_PATTERNS: Record<BatimentType, string[]> = {
+  maison: ["maison", "maison_individuelle", "maison individuelle", "MI"],
+  appartement: ["appartement", "appart", "logement collectif"],
+};
 
 function normalizeType(t: unknown): string {
   return String(t ?? "")
@@ -28,10 +32,10 @@ function normalizeType(t: unknown): string {
     .trim();
 }
 
-function isMaison(rec: AdemeRecord): boolean {
+function isBatimentType(rec: AdemeRecord, type: BatimentType): boolean {
   const t = normalizeType(rec.type_batiment);
   if (!t) return false;
-  return [...MAISON_TYPES].some((m) => t.includes(m));
+  return TYPE_PATTERNS[type].some((m) => t.includes(m.toLowerCase()));
 }
 
 function normalizeAscii(value: unknown): string {
@@ -321,7 +325,12 @@ function toMaisonDpe(rec: AdemeRecord): MaisonDpe {
  *     - même CP + commune + voie type + tokens rue + numéro (strict)
  *  4. Optionnel : vérifie que les DPE matchés sont sur la même parcelle cadastrale
  */
-export async function lookupMaisonByAddress(query: string): Promise<MaisonLookupResult> {
+export async function lookupMaisonByAddress(
+  query: string,
+  opts: { typeBatiment?: BatimentType } = {},
+): Promise<MaisonLookupResult> {
+  const typeBatiment: BatimentType = opts.typeBatiment ?? "maison";
+  const typeLabel = typeBatiment === "maison" ? "maison" : "appartement";
   const notes: string[] = [];
 
   // 1. BAN forward
@@ -355,7 +364,7 @@ export async function lookupMaisonByAddress(query: string): Promise<MaisonLookup
     if (raw.length >= 5) break;
   }
 
-  // 4. Filtre strict : type maison + adresse stricte
+  // 4. Filtre strict : type {maison|appartement} + adresse stricte
   const targetTokens = streetTokens(ban.street ?? ban.label);
   const targetVoieType = extractVoieType(ban.street ?? ban.label);
   const targetHouseNumber = normalizeCompact(ban.housenumber ?? "");
@@ -363,7 +372,7 @@ export async function lookupMaisonByAddress(query: string): Promise<MaisonLookup
   const targetCity = normalizeAscii(ban.city ?? "");
 
   const matched = raw
-    .filter(isMaison)
+    .filter((r) => isBatimentType(r, typeBatiment))
     .filter((r) => {
       if (targetPostcode) {
         const recCp = String(r.code_postal_ban ?? r.code_postal_brut ?? "").trim();
@@ -444,8 +453,8 @@ export async function lookupMaisonByAddress(query: string): Promise<MaisonLookup
     notes: notes.concat(
       matched.length === 0
         ? [
-            `Rayon ${usedR}m exploré. Aucun DPE "maison" à cette adresse exacte. Causes possibles :`,
-            "• Maison construite avant 2007 sans vente/location récente (DPE non obligatoire)",
+            `Rayon ${usedR}m exploré. Aucun DPE "${typeLabel}" à cette adresse exacte. Causes possibles :`,
+            `• ${typeLabel === "maison" ? "Maison" : "Appartement"} construit avant 2007 sans vente/location récente (DPE non obligatoire)`,
             "• DPE expiré et non renouvelé",
             "• Adresse non normalisée sur l'ADEME",
           ]
@@ -467,6 +476,7 @@ const ADEME_BASE = ADEME_DPE_LINES_URL;
 export type MaisonsZoneFilters = {
   cp?: string;
   commune?: string;
+  typeBatiment?: BatimentType; // "maison" (défaut) | "appartement"
   dpeClasses?: string[];     // ["F", "G"]
   gesClasses?: string[];     // ["F", "G"] sur l'étiquette GES
   consoMin?: number;
@@ -512,6 +522,7 @@ async function resolveCommuneInsee(commune: string): Promise<{
 export async function searchMaisonsByZone(
   f: MaisonsZoneFilters,
 ): Promise<{ total: number; items: MaisonDpe[] }> {
+  const typeBatiment: BatimentType = f.typeBatiment ?? "maison";
   const params: string[] = [];
   if (f.cp) params.push(`code_postal_ban:"${f.cp}"`);
   if (f.commune) {
@@ -527,8 +538,8 @@ export async function searchMaisonsByZone(
       params.push(`nom_commune_ban:"${f.commune}"`);
     }
   }
-  // On limite au type maison côté ADEME (plus rapide que filtrer après)
-  params.push(`type_batiment:"maison"`);
+  // On limite au type cible côté ADEME (plus rapide que filtrer après)
+  params.push(`type_batiment:"${typeBatiment}"`);
 
   const url = new URL(ADEME_BASE);
   url.searchParams.set("qs", params.join(" AND "));
@@ -543,7 +554,7 @@ export async function searchMaisonsByZone(
   }
   const json = (await res.json()) as { total?: number; results?: AdemeRecord[] };
 
-  let records = (json.results ?? []).filter(isMaison);
+  let records = (json.results ?? []).filter((r) => isBatimentType(r, typeBatiment));
 
   // Filtres post‑fetch
   if (f.dpeClasses && f.dpeClasses.length > 0) {
