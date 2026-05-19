@@ -411,66 +411,160 @@ export function ProspectDetail({
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Syndic / contact</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {prospect.syndic ? (
-              <div className="rounded-lg border border-border bg-secondary/30 p-2.5">
-                <p className="text-xs font-semibold">{prospect.syndic}</p>
-                <p className="text-[10px] text-muted-foreground">Syndic référencé</p>
-              </div>
-            ) : null}
-            {contacts.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Aucun contact direct. (Ajout multi-contact bientôt disponible)
-              </p>
-            ) : (
-              <ul className="space-y-1.5">
-                {contacts.map((c) => (
-                  <li key={c.id} className="flex items-center gap-2 text-xs">
+        {prospect.copro_id ? (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Syndic / contact</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {prospect.syndic ? (
+                  <div className="rounded-lg border border-border bg-secondary/30 p-2.5">
+                    <p className="text-xs font-semibold">{prospect.syndic}</p>
+                    <p className="text-[10px] text-muted-foreground">Syndic référencé</p>
+                  </div>
+                ) : null}
+                {contacts.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Aucun contact direct.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {contacts.map((c) => (
+                      <li key={c.id} className="flex items-center gap-2 text-xs">
+                        <User className="h-3 w-3 text-muted-foreground" />
+                        <span className="font-medium">{c.full_name ?? "—"}</span>
+                        {c.email ? (
+                          <a href={`mailto:${c.email}`} className="text-muted-foreground hover:text-primary">
+                            <Mail className="h-3 w-3" />
+                          </a>
+                        ) : null}
+                        {c.phone ? (
+                          <a href={`tel:${c.phone}`} className="text-muted-foreground hover:text-primary">
+                            <Phone className="h-3 w-3" />
+                          </a>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">DPE & caractéristiques copro</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-xs">
+                <Row label="Classe finale" value={<DpeBadge classe={prospect.classe_finale} />} />
+                <Row label="Classe réelle" value={prospect.classe_reelle ?? "—"} />
+                <Row label="Classe simulée" value={prospect.classe_simulee ?? "—"} />
+                <Row label="Conso (kWh/m²/an)" value={prospect.conso_moyenne ?? "—"} />
+                <Row label="DPE individuels" value={prospect.nb_dpe_individuels ?? "—"} />
+                <Row label="Lots habitation" value={prospect.nb_lots_habitation ?? "—"} />
+                <Row label="Construction" value={(prospect.periode_construction ?? "—").replace(/_/g, " ")} />
+              </CardContent>
+            </Card>
+          </>
+        ) : (
+          <MaisonProspectCard prospect={prospect} contacts={contacts} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MaisonProspectCard({
+  prospect,
+  contacts,
+}: {
+  prospect: Record<string, unknown>;
+  contacts: Array<{ id: number; full_name: string | null; email: string | null; phone: string | null; role?: string | null }>;
+}) {
+  // Détection du type de bien depuis les tags du prospect
+  let kind: "maison" | "appartement" = "maison";
+  try {
+    const tags = JSON.parse(String(prospect.tags ?? "[]"));
+    if (Array.isArray(tags) && tags.includes("appartement")) kind = "appartement";
+  } catch {}
+  const address = (prospect.custom_address ?? prospect.custom_label ?? "") as string;
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Bien immobilier</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs">
+          <Row
+            label="Type"
+            value={
+              <Badge variant="secondary" className="capitalize">
+                {kind === "appartement" ? "Appartement" : "Maison individuelle"}
+              </Badge>
+            }
+          />
+          {address ? <Row label="Adresse" value={<span className="text-right">{address}</span>} /> : null}
+          {prospect.custom_lat != null && prospect.custom_lon != null ? (
+            <Row
+              label="Coordonnées"
+              value={
+                <span className="font-mono text-[10px]">
+                  {Number(prospect.custom_lat).toFixed(5)}, {Number(prospect.custom_lon).toFixed(5)}
+                </span>
+              }
+            />
+          ) : null}
+          <a
+            href={`/${kind === "appartement" ? "appartements" : "maisons"}?q=${encodeURIComponent(address)}`}
+            className="mt-2 block w-full rounded-md bg-primary px-3 py-1.5 text-center text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            Ouvrir la fiche détaillée
+          </a>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Contacts ({contacts.length})</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {contacts.length === 0 ? (
+            <p className="text-[11px] italic text-muted-foreground">
+              Pas encore de contact (propriétaire, occupant…). Édite depuis la fiche détaillée.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {contacts.map((c) => (
+                <li key={c.id} className="rounded-md border border-border bg-card p-2 text-xs">
+                  <div className="flex items-center gap-2">
                     <User className="h-3 w-3 text-muted-foreground" />
                     <span className="font-medium">{c.full_name ?? "—"}</span>
+                    {c.role ? (
+                      <Badge variant="outline" className="text-[9px]">
+                        {c.role}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                     {c.email ? (
-                      <a
-                        href={`mailto:${c.email}`}
-                        className="text-muted-foreground hover:text-primary"
-                      >
-                        <Mail className="h-3 w-3" />
+                      <a href={`mailto:${c.email}`} className="flex items-center gap-1 hover:text-foreground">
+                        <Mail className="h-3 w-3" /> {c.email}
                       </a>
                     ) : null}
                     {c.phone ? (
-                      <a
-                        href={`tel:${c.phone}`}
-                        className="text-muted-foreground hover:text-primary"
-                      >
-                        <Phone className="h-3 w-3" />
+                      <a href={`tel:${c.phone}`} className="flex items-center gap-1 hover:text-foreground">
+                        <Phone className="h-3 w-3" /> {c.phone}
                       </a>
                     ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">DPE & caractéristiques</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-xs">
-            <Row label="Classe finale" value={<DpeBadge classe={prospect.classe_finale} />} />
-            <Row label="Classe réelle" value={prospect.classe_reelle ?? "—"} />
-            <Row label="Classe simulée" value={prospect.classe_simulee ?? "—"} />
-            <Row label="Conso (kWh/m²/an)" value={prospect.conso_moyenne ?? "—"} />
-            <Row label="DPE individuels" value={prospect.nb_dpe_individuels ?? "—"} />
-            <Row label="Lots habitation" value={prospect.nb_lots_habitation ?? "—"} />
-            <Row label="Construction" value={(prospect.periode_construction ?? "—").replace(/_/g, " ")} />
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }
 

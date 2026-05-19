@@ -22,6 +22,7 @@ import {
   type FullEvaluateResult,
 } from "@/lib/services/cee/engine";
 import type { Action, Project } from "@/lib/services/cee/types";
+import { SHEET_FIELDS, type SheetField } from "@/lib/services/cee/sheet-fields";
 
 type IndividualLite = {
   energie_principale_chauffage?: string | null;
@@ -101,21 +102,20 @@ export function CeeCoproPostes({
     };
   }, [matchedIndividuals]);
 
-  // Project commun (toutes les valeurs sauf incomeBracket)
-  const baseProject = useMemo<Omit<Project, "incomeBracket">>(() => {
+  // Project commun (housingType + incomeBracket sont injectés au moment d'évaluer)
+  const baseProject = useMemo<Omit<Project, "incomeBracket" | "housingType">>(() => {
     const yearFromPeriod = mapPeriodToYear(periodeConstruction);
-    const totalSurface =
-      aggregates.surfaceMoyenne && nbLotsHabitation
-        ? Math.round(aggregates.surfaceMoyenne * nbLotsHabitation)
-        : nbLotsHabitation
-          ? nbLotsHabitation * 60
-          : 0;
+    const aptSurface = aggregates.surfaceMoyenne
+      ? Math.round(aggregates.surfaceMoyenne)
+      : 60; // surface moyenne par appartement
     return {
       buildingType: "Habitation",
-      housingType: "Batiment d'habitation collectif en copropriete",
       postalCode: codePostal ?? undefined,
       constructionYear: yearFromPeriod ?? undefined,
-      buildingSurface: totalSurface || undefined,
+      // On utilise la surface moyenne d'un appartement (et non la surface totale
+      // de l'immeuble), pour que les fiches qui calculent par lot soient
+      // dimensionnées correctement.
+      buildingSurface: aptSurface,
       householdSize: 3,
       mwhCumacPrice: Number.parseFloat(priceStd.replace(",", ".")) || 7,
       mwhCumacPricePrecarious:
@@ -128,7 +128,6 @@ export function CeeCoproPostes({
     codePostal,
     periodeConstruction,
     aggregates.surfaceMoyenne,
-    nbLotsHabitation,
     priceStd,
     pricePrecaire,
   ]);
@@ -162,23 +161,62 @@ export function CeeCoproPostes({
     return merged;
   }, [classeDpeCollective, actionsOverride]);
 
-  // === Évaluation 2 fois : intermediate + veryModest ===================
-  const resultsStd = useMemo(
-    () =>
-      evaluateAllSheets(
-        { ...baseProject, incomeBracket: "intermediate" } as Project,
-        { buildingTypes: ["Habitation"], actions: actionsMerged },
-      ),
-    [baseProject, actionsMerged],
-  );
+  // === Évaluation 2 fois : intermediate + veryModest, et 2 housingTypes =
+  //
+  // On évalue avec housingType="Batiment d'habitation collectif en copropriete"
+  // (pour les fiches purement collectives : BAR-TH-177, BAR-TH-179, etc.) ET
+  // avec housingType="Appartement" (pour les fiches qui n'acceptent pas le
+  // collectif strict mais qu'on veut appliquer par lot dans la copro).
+  // On merge par code, en gardant le meilleur statut (Eligible > Confirmer
+  // > Potentiel > Non éligible).
+  const evalForIncomeAndHousing = useMemo(() => {
+    return (income: "intermediate" | "veryModest"): FullEvaluateResult[] => {
+      const projectCollectif: Project = {
+        ...baseProject,
+        incomeBracket: income,
+        housingType: "Batiment d'habitation collectif en copropriete",
+      };
+      const projectAppt: Project = {
+        ...baseProject,
+        incomeBracket: income,
+        housingType: "Appartement",
+      };
+      const collectif = evaluateAllSheets(projectCollectif, {
+        buildingTypes: ["Habitation"],
+        actions: actionsMerged,
+      });
+      const appt = evaluateAllSheets(projectAppt, {
+        buildingTypes: ["Habitation"],
+        actions: actionsMerged,
+      });
+      const priority: Record<string, number> = {
+        Eligible: 0,
+        "Eligibilite a confirmer": 1,
+        "Potentiellement eligible": 2,
+        "Non eligible": 3,
+      };
+      const merged = new Map<string, FullEvaluateResult>();
+      for (const r of [...collectif, ...appt]) {
+        const existing = merged.get(r.sheet.code);
+        if (
+          !existing ||
+          (priority[r.evaluation.status] ?? 99) <
+            (priority[existing.evaluation.status] ?? 99)
+        ) {
+          merged.set(r.sheet.code, r);
+        }
+      }
+      return [...merged.values()];
+    };
+  }, [baseProject, actionsMerged]);
 
+  const resultsStd = useMemo(
+    () => evalForIncomeAndHousing("intermediate"),
+    [evalForIncomeAndHousing],
+  );
   const resultsModest = useMemo(
-    () =>
-      evaluateAllSheets(
-        { ...baseProject, incomeBracket: "veryModest" } as Project,
-        { buildingTypes: ["Habitation"], actions: actionsMerged },
-      ),
-    [baseProject, actionsMerged],
+    () => evalForIncomeAndHousing("veryModest"),
+    [evalForIncomeAndHousing],
   );
 
   // Index par code pour zip
@@ -374,6 +412,13 @@ export function CeeCoproPostes({
                     resultStd={r}
                     resultModest={modestByCode.get(r.sheet.code) ?? r}
                     currentAction={actionsMerged[r.sheet.code] ?? {}}
+                    project={
+                      {
+                        ...baseProject,
+                        incomeBracket: "intermediate",
+                        housingType: "Appartement",
+                      } as Project
+                    }
                     onUpdateAction={(key, value) =>
                       updateAction(r.sheet.code, key, value)
                     }
@@ -394,11 +439,13 @@ function SheetRow({
   resultStd,
   resultModest,
   currentAction,
+  project,
   onUpdateAction,
 }: {
   resultStd: FullEvaluateResult;
   resultModest: FullEvaluateResult;
   currentAction: Action;
+  project: Project;
   onUpdateAction: (key: string, value: unknown) => void;
 }) {
   const { evaluation, sheet } = resultStd;
@@ -522,7 +569,7 @@ function SheetRow({
       {editing ? (
         <ActionEditor
           code={sheet.code}
-          missing={allMissing}
+          project={project}
           currentAction={currentAction}
           onUpdate={onUpdateAction}
         />
@@ -532,363 +579,148 @@ function SheetRow({
 }
 
 /**
- * Mini formulaire dynamique pour compléter les `missing[]` d'une fiche.
- * Combine heuristique (patterns connus → inputs typés) + fallback (input
- * texte libre étiqueté avec la string missing). L'utilisateur peut donc
- * combler n'importe quel champ.
+ * Mini formulaire pour compléter une fiche "à confirmer", basé sur le
+ * catalogue exact des `fields` portés depuis sheets.js source.
+ *
+ * Plus de fallback texte libre : chaque champ a un type et des options
+ * connus du moteur, donc la saisie déclenche bien la validation.
  */
 function ActionEditor({
   code,
-  missing,
+  project,
   currentAction,
   onUpdate,
 }: {
   code: string;
-  missing: string[];
+  project: Project;
   currentAction: Action;
   onUpdate: (key: string, value: unknown) => void;
 }) {
-  const { typed, untyped } = useMemo(
-    () => splitInputs(code, missing),
-    [code, missing],
-  );
+  const allFields = SHEET_FIELDS[code];
+  if (!allFields || allFields.length === 0) {
+    return (
+      <div className="mt-2 rounded-md bg-slate-100 p-2 text-[10px] italic text-slate-700">
+        Saisie détaillée non disponible pour cette fiche dans le simulateur
+        rapide. Utilise la page complète /simulateur-cee pour ce cas.
+      </div>
+    );
+  }
 
-  if (typed.length === 0 && untyped.length === 0) return null;
+  // Filtre les fields actifs (selon showWhen)
+  const visibleFields = allFields.filter((f) => {
+    if (!f.showWhen) return true;
+    try {
+      return f.showWhen(currentAction, project);
+    } catch {
+      return true;
+    }
+  });
+
+  const sheetFields = visibleFields.filter((f) => f.group !== "coupDePouce");
+  const cdpFields = visibleFields.filter((f) => f.group === "coupDePouce");
 
   return (
-    <div className="mt-2 rounded-md bg-amber-100/60 p-2">
-      <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
-        Compléter pour calculer
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {typed.map((input) => (
-          <div key={input.key} className="flex flex-col gap-0.5">
-            <label className="text-[9px] font-semibold text-amber-900">
-              {input.label}
-            </label>
-            {input.kind === "select" ? (
-              <select
-                value={String(currentAction[input.key] ?? "")}
-                onChange={(e) => onUpdate(input.key, e.target.value)}
-                className="h-7 rounded-md border border-amber-300 bg-white px-2 text-[11px]"
-              >
-                <option value="">Choisir…</option>
-                {(input.options ?? []).map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <Input
-                value={String(currentAction[input.key] ?? "")}
-                onChange={(e) => onUpdate(input.key, e.target.value)}
-                type={input.kind === "number" ? "number" : "text"}
-                className="h-7 text-[11px]"
-              />
-            )}
-          </div>
-        ))}
-        {/* Fallback : inputs texte libres pour les missing non-typés */}
-        {untyped.map((mraw, idx) => {
-          const key = makeKeyFromLabel(mraw);
-          return (
-            <div key={`untyped-${idx}`} className="col-span-2 flex flex-col gap-0.5">
-              <label className="text-[9px] font-semibold text-amber-900">
-                {mraw}
-              </label>
-              <Input
-                value={String(currentAction[key] ?? "")}
-                onChange={(e) => onUpdate(key, e.target.value)}
-                type="text"
-                placeholder="Saisir la valeur…"
-                className="h-7 text-[11px]"
-              />
-              <span className="text-[9px] italic text-amber-700">
-                champ libre · key = <code className="font-mono">{key}</code>
-              </span>
-            </div>
-          );
-        })}
-      </div>
+    <div className="mt-2 space-y-2">
+      <FieldGroup
+        title="Compléter pour calculer"
+        tone="amber"
+        fields={sheetFields}
+        currentAction={currentAction}
+        onUpdate={onUpdate}
+      />
+      {cdpFields.length > 0 ? (
+        <FieldGroup
+          title="Coup de pouce — conditions"
+          tone="purple"
+          fields={cdpFields}
+          currentAction={currentAction}
+          onUpdate={onUpdate}
+        />
+      ) : null}
     </div>
   );
 }
 
-// === Heuristique missing → input (étendue) =============================
-
-interface InputSpec {
-  key: string;
-  label: string;
-  kind: "text" | "number" | "select";
-  options?: string[];
-}
-
-function splitInputs(
-  code: string,
-  missing: string[],
-): { typed: InputSpec[]; untyped: string[] } {
-  const typed: InputSpec[] = [];
-  const untyped: string[] = [];
-  const seenKeys = new Set<string>();
-  const add = (spec: InputSpec) => {
-    if (seenKeys.has(spec.key)) return;
-    seenKeys.add(spec.key);
-    typed.push(spec);
-  };
-
-  for (const m of missing) {
-    const lc = m.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-    let matched = true;
-    if (lc.includes("surface") && (lc.includes("logement") || lc.includes("habit"))) {
-      add({ key: "buildingSurface", label: "Surface (m²)", kind: "number" });
-    } else if (lc.includes("surface") && lc.includes("chauf")) {
-      add({ key: "heatedSurface", label: "Surface chauffée (m²)", kind: "number" });
-    } else if (lc.includes("surface") && (lc.includes("refroid") || lc.includes("clim"))) {
-      add({ key: "coolingSurface", label: "Surface refroidie (m²)", kind: "number" });
-    } else if (lc.includes("surface") && lc.includes("isole")) {
-      add({ key: "isolatedSurface", label: "Surface isolée (m²)", kind: "number" });
-    } else if (lc.includes("surface") && lc.includes("vitre")) {
-      add({ key: "glazedSurface", label: "Surface vitrée (m²)", kind: "number" });
-    } else if (lc.includes("surface")) {
-      add({ key: "surface", label: m, kind: "number" });
-    } else if (lc.includes("saut") && lc.includes("classe")) {
-      if (lc.includes("premiere etape")) {
-        add({
-          key: "firstStageClassJumpCount",
-          label: "Sauts de classe 1ère étape",
-          kind: "select",
-          options: ["1", "2", "3"],
-        });
-      } else {
-        add({
-          key: "classJumpCount",
-          label: "Nombre de sauts de classe",
-          kind: "select",
-          options: ["2", "3", "4 ou plus"],
-        });
-      }
-    } else if (lc.includes("annee de construction")) {
-      add({ key: "constructionYear", label: "Année construction", kind: "number" });
-    } else if (lc.includes("code postal")) {
-      add({ key: "postalCode", label: "Code postal", kind: "text" });
-    } else if (lc.includes("type d'habitation") || lc.includes("type d habitation")) {
-      add({
-        key: "housingType",
-        label: "Type d'habitation",
-        kind: "select",
-        options: [
-          "Maison individuelle",
-          "Appartement",
-          "Batiment d'habitation collectif en monopropriete",
-          "Batiment d'habitation collectif en copropriete",
-        ],
-      });
-    } else if (lc.includes("residence principale") || lc.includes("residence secondaire")) {
-      add({
-        key: "coupDePoucePrimaryResidence",
-        label: "Résidence principale ?",
-        kind: "select",
-        options: ["Oui", "Non"],
-      });
-    } else if (lc.includes("equipement remplace") || lc.includes("equipement remplac")) {
-      add({
-        key: "coupDePouceReplacedEquipment",
-        label: "Équipement remplacé",
-        kind: "select",
-        options: ["Chaudiere au charbon", "Chaudiere au fioul", "Chaudiere au gaz", "Autre"],
-      });
-    } else if (lc.includes("reseau de chaleur") && lc.includes("impossib")) {
-      add({
-        key: "coupDePouceHeatNetworkImpossible",
-        label: "Raccordement réseau de chaleur impossible ?",
-        kind: "select",
-        options: ["Oui", "Non"],
-      });
-    } else if (lc.includes("nombre de logements") || lc.includes("apartmentcount")) {
-      add({ key: "apartmentCount", label: "Nombre de logements", kind: "number" });
-    } else if (lc.includes("revenus")) {
-      add({
-        key: "incomeBracket",
-        label: "Catégorie de revenus",
-        kind: "select",
-        options: ["veryModest", "modest", "intermediate", "high"],
-      });
-    } else if (lc.includes("anah") || lc.includes("maprimerenov")) {
-      add({
-        key: "anahRenovationRoute",
-        label: "Parcours Anah / MPR Ampleur ?",
-        kind: "select",
-        options: ["Oui", "Non"],
-      });
-    } else if (
-      lc.includes("usage") &&
-      (lc.includes("pac") || lc.includes("chauffage") || code.includes("TH-163"))
-    ) {
-      add({
-        key: "usage",
-        label: "Usage",
-        kind: "select",
-        options: ["Chauffage", "Chauffage + ECS", "ECS uniquement"],
-      });
-    } else if (lc.includes("puissance")) {
-      add({
-        key: "powerBand",
-        label: "Bande de puissance",
-        kind: "select",
-        options: ["Inferieure ou egale a 400 kW", "Superieure a 400 kW"],
-      });
-    } else if (lc.includes("secteur")) {
-      add({
-        key: "sector",
-        label: "Secteur d'activité",
-        kind: "select",
-        options: [
-          "Bureaux",
-          "Enseignement",
-          "Commerces",
-          "Hotellerie / Restauration",
-          "Sante",
-          "Autres secteurs",
-        ],
-      });
-    } else if (lc.includes("etas") || lc.includes("rendement saisonnier")) {
-      add({
-        key: "etasBand",
-        label: "Tranche d'Etas",
-        kind: "select",
-        options: [
-          "Inferieur a 111 %",
-          "De 111 % a moins de 126 %",
-          "De 126 % a moins de 175 %",
-          "175 % ou plus",
-        ],
-      });
-    } else if (lc.includes("cop") && !lc.includes("scop")) {
-      add({
-        key: "copBand",
-        label: "Tranche de COP",
-        kind: "select",
-        options: ["Inferieur a 3,4", "De 3,4 a moins de 4,5", "4,5 ou plus"],
-      });
-    } else if (lc.includes("scop")) {
-      add({ key: "scop", label: "SCOP", kind: "number" });
-    } else if (lc.includes("temperature")) {
-      add({
-        key: "temperatureType",
-        label: "Type température",
-        kind: "select",
-        options: ["Basse temperature", "Moyenne ou haute temperature"],
-      });
-    } else if (lc.includes("resistance thermique") || lc.includes(" r ")) {
-      add({ key: "thermalResistance", label: "Résistance R (m².K/W)", kind: "number" });
-    } else if (lc.includes("coefficient u") || lc.includes("uw")) {
-      add({ key: "uCoeff", label: "Coefficient U", kind: "number" });
-    } else if (lc.includes("classe du systeme") || lc.includes("classe installee")) {
-      add({
-        key: "installedClass",
-        label: "Classe du système installé",
-        kind: "select",
-        options: ["A", "B"],
-      });
-    } else if (lc.includes("zone climatique")) {
-      add({
-        key: "climateZone",
-        label: "Zone climatique",
-        kind: "select",
-        options: ["H1", "H2", "H3"],
-      });
-    } else if (lc.includes("nature de l'operation") || lc.includes("nature operation")) {
-      add({
-        key: "operationMode",
-        label: "Nature de l'opération",
-        kind: "select",
-        options: ["Achat d'un systeme neuf", "Amelioration d'un systeme existant"],
-      });
-    } else if (lc.includes("nombre de personnes") || lc.includes("foyer")) {
-      add({ key: "householdSize", label: "Taille du foyer", kind: "number" });
-    } else if (
-      lc.includes("type d'energie") ||
-      lc.includes("energie utilisee") ||
-      lc.includes("combustible") ||
-      lc.includes("electricite")
-    ) {
-      add({
-        key: "energyType",
-        label: "Type d'énergie",
-        kind: "select",
-        options: ["Combustible", "Electricite"],
-      });
-    } else if (lc.includes("ventilation")) {
-      add({
-        key: "ventilationType",
-        label: "Type de ventilation",
-        kind: "select",
-        options: [
-          "Simple flux autoreglable",
-          "Simple flux hygroreglable Type A",
-          "Simple flux hygroreglable Type B",
-          "Double flux",
-        ],
-      });
-    } else if (lc.includes("caisson")) {
-      add({
-        key: "caissonType",
-        label: "Type de caisson",
-        kind: "select",
-        options: ["Caisson basse consommation", "Caisson standard", "Caisson basse pression"],
-      });
-    } else if (lc.includes("type de generateur") || lc.includes("type generateur")) {
-      add({ key: "generatorType", label: "Type de générateur", kind: "text" });
-    } else if (lc.includes("nombre d'occupants")) {
-      add({ key: "occupantCount", label: "Nombre d'occupants", kind: "number" });
-    } else if (lc.includes("nombre de chambres") || lc.includes("chambres equipees")) {
-      add({ key: "roomCount", label: "Nombre de chambres", kind: "number" });
-    } else if (lc.includes("nombre de douches") || lc.includes("douches raccord")) {
-      add({ key: "showerCount", label: "Nombre de douches raccordées", kind: "number" });
-    } else if (lc.includes("part de la pac") || lc.includes("pac power")) {
-      add({
-        key: "pacPowerSharePercent",
-        label: "Part de la PAC (%)",
-        kind: "number",
-      });
-    } else if (lc.includes("comfort") || lc.includes("confort")) {
-      add({
-        key: "comfortPresent",
-        label: "Confort présent",
-        kind: "select",
-        options: ["Oui", "Non"],
-      });
-    } else if (lc.includes("equipement existant") && lc.includes("classe")) {
-      add({
-        key: "existingClassAtMostC",
-        label: "Système existant ≤ classe C",
-        kind: "select",
-        options: ["Oui", "Non"],
-      });
-    } else {
-      matched = false;
-    }
-    if (!matched) {
-      untyped.push(m);
-    }
-  }
-
-  return { typed, untyped };
-}
-
-function makeKeyFromLabel(label: string): string {
+function FieldGroup({
+  title,
+  tone,
+  fields,
+  currentAction,
+  onUpdate,
+}: {
+  title: string;
+  tone: "amber" | "purple";
+  fields: SheetField[];
+  currentAction: Action;
+  onUpdate: (key: string, value: unknown) => void;
+}) {
+  if (fields.length === 0) return null;
+  const bg = tone === "amber" ? "bg-amber-100/60" : "bg-purple-100/50";
+  const titleCol = tone === "amber" ? "text-amber-900" : "text-purple-900";
+  const inputBorder = tone === "amber" ? "border-amber-300" : "border-purple-300";
   return (
-    label
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim()
-      .split(" ")
-      .slice(0, 4)
-      .map((w, i) => (i === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1)))
-      .join("") || "extraField"
+    <div className={cn("rounded-md p-2", bg)}>
+      <div
+        className={cn(
+          "mb-1.5 text-[10px] font-bold uppercase tracking-wider",
+          titleCol,
+        )}
+      >
+        {title}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {fields.map((field) => (
+          <div
+            key={field.name}
+            className={cn(
+              "flex flex-col gap-0.5",
+              field.type === "checkbox" ? "col-span-2 flex-row items-center" : "",
+            )}
+          >
+            {field.type === "checkbox" ? (
+              <label className="flex items-center gap-2 text-[10px] font-semibold">
+                <input
+                  type="checkbox"
+                  checked={Boolean(currentAction[field.name])}
+                  onChange={(e) => onUpdate(field.name, e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                <span className={titleCol}>{field.label}</span>
+              </label>
+            ) : (
+              <>
+                <label className={cn("text-[9px] font-semibold", titleCol)}>
+                  {field.label}
+                </label>
+                {field.type === "select" ? (
+                  <select
+                    value={String(currentAction[field.name] ?? "")}
+                    onChange={(e) => onUpdate(field.name, e.target.value)}
+                    className={cn(
+                      "h-7 rounded-md border bg-white px-2 text-[11px]",
+                      inputBorder,
+                    )}
+                  >
+                    {(field.options ?? []).map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt === "" ? "Choisir…" : opt}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    value={String(currentAction[field.name] ?? "")}
+                    onChange={(e) => onUpdate(field.name, e.target.value)}
+                    type={field.type === "number" ? "number" : "text"}
+                    className={cn("h-7 text-[11px]", inputBorder)}
+                  />
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

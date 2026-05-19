@@ -203,6 +203,7 @@ export function CoproFiche({
   const [details, setDetails] = useState<DpeDetails | null>(null);
   const [loading, setLoading] = useState(false);
   const [prospect, setProspect] = useState(prospectInit);
+  const [ceeOpen, setCeeOpen] = useState(false);
 
   const loadDpe = async (refresh = false) => {
     setLoading(true);
@@ -595,25 +596,35 @@ export function CoproFiche({
         </CardContent>
       </Card>
 
-      {/* TRAVAUX CEE COLLECTIFS ÉLIGIBLES */}
+      {/* TRAVAUX CEE COLLECTIFS ÉLIGIBLES (collapsé par défaut) */}
       <Card className="print:shadow-none">
-        <CardHeader>
+        <button
+          type="button"
+          onClick={() => setCeeOpen(!ceeOpen)}
+          className="flex w-full items-center justify-between p-4 hover:bg-secondary/30"
+        >
           <div className="flex items-center gap-2">
             <Zap className="h-4 w-4 text-emerald-700" />
             <CardTitle className="text-sm">Travaux CEE collectifs éligibles</CardTitle>
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+              {ceeOpen ? "Replier" : "Voir l'estimation"}
+            </span>
           </div>
-        </CardHeader>
-        <CardContent>
-          <CeeCoproPostes
-            classeDpeCollective={
-              details?.immeubleFinal.classe ?? copro.classe_finale ?? null
-            }
-            periodeConstruction={copro.periode_construction ?? null}
-            nbLotsHabitation={copro.nb_lots_habitation ?? null}
-            codePostal={copro.code_postal ?? null}
-            matchedIndividuals={details?.matchedRecords ?? undefined}
-          />
-        </CardContent>
+          <span className="text-xs text-muted-foreground">{ceeOpen ? "▲" : "▼"}</span>
+        </button>
+        {ceeOpen ? (
+          <CardContent className="pt-0">
+            <CeeCoproPostes
+              classeDpeCollective={
+                details?.immeubleFinal.classe ?? copro.classe_finale ?? null
+              }
+              periodeConstruction={copro.periode_construction ?? null}
+              nbLotsHabitation={copro.nb_lots_habitation ?? null}
+              codePostal={copro.code_postal ?? null}
+              matchedIndividuals={details?.matchedRecords ?? undefined}
+            />
+          </CardContent>
+        ) : null}
       </Card>
 
       {/* IDENTITE / LOCALISATION */}
