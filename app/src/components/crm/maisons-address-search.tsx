@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, MapPin, Home, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye } from "lucide-react";
+import { Loader2, MapPin, Home, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -328,6 +328,14 @@ export function MaisonsAddressSearch() {
   );
 }
 
+type DvfSummary = {
+  last_sale_date: string | null;
+  last_sale_price: number | null;
+  last_prix_m2: number | null;
+  median_prix_m2: number | null;
+  monthsSince: number | null;
+};
+
 function MaisonResultCard({
   maison: m,
   index,
@@ -339,6 +347,44 @@ function MaisonResultCard({
   onAdd: (m: MaisonDpe, i: number) => void;
   loading: boolean;
 }) {
+  const [dvf, setDvf] = useState<DvfSummary | null>(null);
+
+  useEffect(() => {
+    if (m.lat == null || m.lon == null) return;
+    let aborted = false;
+    const p = new URLSearchParams();
+    p.set("lat", String(m.lat));
+    p.set("lon", String(m.lon));
+    p.set("dist", "30");
+    p.set("type", "maison");
+    if (m.address.housenumber) p.set("housenumber", m.address.housenumber);
+    if (m.address.street) p.set("street", m.address.street);
+    fetch(`/api/maisons/dvf?${p.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (aborted || !j) return;
+        const date: string | null = j.stats?.last_sale_date ?? null;
+        const months = date
+          ? Math.floor(
+              (Date.now() - Date.parse(date)) / (30.4 * 24 * 3600 * 1000),
+            )
+          : null;
+        setDvf({
+          last_sale_date: date,
+          last_sale_price: j.stats?.last_sale_price ?? null,
+          last_prix_m2: j.stats?.last_prix_m2 ?? null,
+          median_prix_m2: j.stats?.median_prix_m2 ?? null,
+          monthsSince: months,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      aborted = true;
+    };
+  }, [m.lat, m.lon, m.address.housenumber, m.address.street]);
+
+  const isRecent = dvf?.monthsSince != null && dvf.monthsSince <= 24;
+
   return (
     <Card
       className="overflow-hidden border-0 text-white shadow-lg"
@@ -366,6 +412,15 @@ function MaisonResultCard({
                     Construit en {m.annee_construction}
                   </Badge>
                 ) : null}
+                {isRecent ? (
+                  <Badge
+                    variant="secondary"
+                    className="bg-emerald-500/90 text-white"
+                  >
+                    <TrendingUp className="mr-1 h-3 w-3" />
+                    Vendue il y a {dvf?.monthsSince}&nbsp;mois
+                  </Badge>
+                ) : null}
               </div>
             </div>
           </div>
@@ -380,6 +435,35 @@ function MaisonResultCard({
           <div className="mt-4">
             <DpeScaleBar active={m.classe} />
           </div>
+
+          {dvf && dvf.last_sale_price ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-white/15 px-3 py-2 text-[11px] backdrop-blur">
+              <Banknote className="h-3.5 w-3.5" />
+              <span className="opacity-90">Dernière vente :</span>
+              <strong className="font-black">
+                {new Intl.NumberFormat("fr-FR", {
+                  style: "currency",
+                  currency: "EUR",
+                  maximumFractionDigits: 0,
+                }).format(dvf.last_sale_price)}
+              </strong>
+              {dvf.last_prix_m2 ? (
+                <span className="opacity-80">
+                  ({dvf.last_prix_m2.toLocaleString("fr-FR")} €/m²)
+                </span>
+              ) : null}
+              {dvf.last_sale_date ? (
+                <span className="opacity-80">
+                  · {new Date(dvf.last_sale_date).toLocaleDateString("fr-FR")}
+                </span>
+              ) : null}
+              {dvf.median_prix_m2 ? (
+                <span className="ml-auto opacity-70">
+                  Médiane zone : {dvf.median_prix_m2.toLocaleString("fr-FR")} €/m²
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button

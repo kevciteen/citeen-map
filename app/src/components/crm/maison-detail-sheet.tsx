@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Home, ExternalLink, Plus, X, Calendar, Ruler, Zap, Flame,
   Snowflake, Wind, Wallet, Building, Shield, FileText, Loader2,
+  Banknote, TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DpeBadge, DpeScaleBar } from "@/components/ui/dpe-badge";
@@ -107,6 +108,38 @@ function isExpired(dateFinValidite: string | null): boolean {
   return Number.isFinite(t) && t < Date.now();
 }
 
+type DvfTx = {
+  id_mutation: string;
+  date_mutation: string;
+  nature_mutation: string;
+  valeur_fonciere: number | null;
+  type_local: string;
+  surface_reelle_bati: number | null;
+  nombre_pieces_principales: number | null;
+  surface_terrain: number | null;
+  adresse_numero: string | null;
+  adresse_nom_voie: string | null;
+  prix_m2: number | null;
+};
+
+type DvfResponse = {
+  transactions: DvfTx[];
+  stats: {
+    count: number;
+    last_sale_date: string | null;
+    last_sale_price: number | null;
+    last_prix_m2: number | null;
+    median_prix_m2: number | null;
+  };
+};
+
+function monthsSince(dateStr: string | null): number | null {
+  if (!dateStr) return null;
+  const t = Date.parse(dateStr);
+  if (!Number.isFinite(t)) return null;
+  return Math.floor((Date.now() - t) / (30.4 * 24 * 3600 * 1000));
+}
+
 export function MaisonDetailSheet({
   maison,
   trigger,
@@ -118,7 +151,42 @@ export function MaisonDetailSheet({
 }) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [dvf, setDvf] = useState<DvfResponse | null>(null);
+  const [dvfLoading, setDvfLoading] = useState(false);
   const expired = isExpired(maison.date_fin_validite);
+
+  useEffect(() => {
+    if (!open) return;
+    if (dvf) return; // déjà chargé
+    if (maison.lat == null || maison.lon == null) return;
+    let aborted = false;
+    setDvfLoading(true);
+    const params = new URLSearchParams();
+    params.set("lat", String(maison.lat));
+    params.set("lon", String(maison.lon));
+    params.set("dist", "30");
+    params.set("type", "maison");
+    if (maison.address.housenumber)
+      params.set("housenumber", maison.address.housenumber);
+    if (maison.address.street) params.set("street", maison.address.street);
+    fetch(`/api/maisons/dvf?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((j: DvfResponse) => {
+        if (!aborted) setDvf(j);
+      })
+      .catch(() => {
+        if (!aborted) setDvf({ transactions: [], stats: { count: 0, last_sale_date: null, last_sale_price: null, last_prix_m2: null, median_prix_m2: null } });
+      })
+      .finally(() => {
+        if (!aborted) setDvfLoading(false);
+      });
+    return () => {
+      aborted = true;
+    };
+  }, [open, maison.lat, maison.lon, maison.address.housenumber, maison.address.street, dvf]);
+
+  const lastSaleMonths = monthsSince(dvf?.stats.last_sale_date ?? null);
+  const isRecentSale = lastSaleMonths != null && lastSaleMonths <= 24;
 
   const addToPipeline = async () => {
     setAdding(true);
@@ -189,6 +257,12 @@ export function MaisonDetailSheet({
                   {expired ? (
                     <span className="rounded-full bg-red-700/80 px-2 py-0.5 text-[10px] font-bold backdrop-blur">
                       ⚠ DPE expiré
+                    </span>
+                  ) : null}
+                  {isRecentSale ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600/90 px-2 py-0.5 text-[10px] font-bold backdrop-blur">
+                      <TrendingUp className="h-3 w-3" />
+                      Vendue il y a {lastSaleMonths}&nbsp;mois
                     </span>
                   ) : null}
                 </div>
@@ -320,6 +394,78 @@ export function MaisonDetailSheet({
                 strong={expired}
                 danger={expired}
               />
+            </Section>
+
+            {/* TRANSACTIONS DVF */}
+            <Section
+              icon={<Banknote className="h-4 w-4 text-emerald-600" />}
+              title="Transactions immobilières (DVF)"
+            >
+              {dvfLoading ? (
+                <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Chargement des transactions DGFiP…
+                </div>
+              ) : null}
+              {!dvfLoading && dvf && dvf.transactions.length === 0 ? (
+                <p className="py-2 text-xs italic text-muted-foreground">
+                  Aucune vente trouvée pour cette adresse dans l'open data DVF.
+                  Soit la maison n'a pas changé de mains depuis 2014, soit la
+                  vente n'a pas encore été publiée par la DGFiP (délai ~6&nbsp;mois).
+                </p>
+              ) : null}
+              {!dvfLoading && dvf && dvf.transactions.length > 0 ? (
+                <>
+                  {/* Indicateur marché */}
+                  {dvf.stats.median_prix_m2 ? (
+                    <div className="mb-3 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg bg-emerald-50 p-2 text-[11px]">
+                        <div className="font-semibold uppercase tracking-wider text-emerald-700">
+                          Dernière vente
+                        </div>
+                        <div className="mt-0.5 text-base font-black text-emerald-900">
+                          {fmtEuro(dvf.stats.last_sale_price) ?? "—"}
+                        </div>
+                        <div className="text-[10px] text-emerald-800/80">
+                          {fmtDate(dvf.stats.last_sale_date)} ·{" "}
+                          {dvf.stats.last_prix_m2
+                            ? `${dvf.stats.last_prix_m2.toLocaleString("fr-FR")} €/m²`
+                            : "prix/m² n/c"}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-slate-100 p-2 text-[11px]">
+                        <div className="font-semibold uppercase tracking-wider text-slate-700">
+                          Prix médian zone (maisons)
+                        </div>
+                        <div className="mt-0.5 text-base font-black text-slate-900">
+                          {dvf.stats.median_prix_m2.toLocaleString("fr-FR")} €/m²
+                        </div>
+                        <div className="text-[10px] text-slate-600">
+                          sur {dvf.transactions.filter((t) => /maison/i.test(t.type_local)).length} transactions
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Historique */}
+                  <div className="space-y-1.5">
+                    {dvf.transactions.slice(0, 8).map((tx) => (
+                      <DvfRow key={tx.id_mutation} tx={tx} />
+                    ))}
+                    {dvf.transactions.length > 8 ? (
+                      <p className="pt-1 text-[10px] italic text-muted-foreground">
+                        + {dvf.transactions.length - 8} transactions plus anciennes (non affichées)
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <p className="mt-2 rounded-lg bg-blue-50 p-2 text-[11px] text-blue-900">
+                    💡 Données DGFiP publiées via data.gouv.fr — anonymisées
+                    (pas de nom d'acheteur/vendeur). Une vente récente est un
+                    signal fort pour la prospection rénovation.
+                  </p>
+                </>
+              ) : null}
             </Section>
 
             {/* CARACTÉRISTIQUES */}
@@ -512,6 +658,48 @@ function fmtDate(s: string | null): string | null {
   if (!s) return null;
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString("fr-FR");
+}
+
+function DvfRow({ tx }: { tx: DvfTx }) {
+  const isMaison = /maison/i.test(tx.type_local);
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-border/40 bg-card px-3 py-2 text-xs">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-bold tabular-nums">
+            {fmtDate(tx.date_mutation) ?? "—"}
+          </span>
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+              isMaison ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700",
+            )}
+          >
+            {tx.type_local || "—"}
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            {tx.nature_mutation}
+          </span>
+        </div>
+        <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+          {tx.adresse_numero ?? ""} {tx.adresse_nom_voie ?? ""}
+          {tx.surface_reelle_bati ? ` · ${tx.surface_reelle_bati} m²` : ""}
+          {tx.nombre_pieces_principales ? ` · ${tx.nombre_pieces_principales} pièces` : ""}
+          {tx.surface_terrain ? ` · terrain ${tx.surface_terrain} m²` : ""}
+        </div>
+      </div>
+      <div className="shrink-0 text-right">
+        <div className="font-black tabular-nums">
+          {fmtEuro(tx.valeur_fonciere) ?? "—"}
+        </div>
+        {tx.prix_m2 ? (
+          <div className="text-[10px] text-muted-foreground tabular-nums">
+            {tx.prix_m2.toLocaleString("fr-FR")} €/m²
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 void Calendar;
