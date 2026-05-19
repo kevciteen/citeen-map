@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { Topbar } from "@/components/layout/topbar";
 import { ProspectDetail } from "@/components/crm/prospect-detail";
+import { ensureProspectDpe } from "@/lib/db/ensure-prospect-dpe";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ export default async function ProspectPage({ params }: { params: Promise<{ id: s
   const pid = Number(id);
   if (!Number.isFinite(pid)) notFound();
 
+  await ensureProspectDpe();
   const prospect = await db.get(
     `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
             c.nb_lots, c.nb_lots_habitation, c.periode_construction,

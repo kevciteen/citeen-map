@@ -198,6 +198,7 @@ export function MaisonsZoneSearch({
             customAddress: m.address.label,
             customLat: m.lat,
             customLon: m.lon,
+            numeroDpe: m.numero_dpe,
             stage: "to_contact",
             priority: 2,
             tags: [typeBatiment, `dpe-${m.classe}`],

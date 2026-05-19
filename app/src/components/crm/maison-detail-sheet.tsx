@@ -206,6 +206,7 @@ export function MaisonDetailSheet({
           customAddress: maison.address.label,
           customLat: maison.lat,
           customLon: maison.lon,
+          numeroDpe: maison.numero_dpe,
           stage: "to_contact",
           priority: 2,
           tags: [typeBatiment, `dpe-${maison.classe}`, `ges-${maison.ges}`],

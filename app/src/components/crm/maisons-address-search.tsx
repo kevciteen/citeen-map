@@ -175,6 +175,7 @@ export function MaisonsAddressSearch({
           customAddress: m.address.label,
           customLat: m.lat ?? result?.banResolved?.lat,
           customLon: m.lon ?? result?.banResolved?.lon,
+          numeroDpe: m.numero_dpe,
           stage: "to_contact",
           priority: 2,
           tags: [typeBatiment, `dpe-${m.classe}`],

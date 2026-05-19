@@ -3,6 +3,7 @@ import { db } from "@/lib/db/client";
 import type { InValue } from "@libsql/client";
 import { z } from "zod";
 import { ensureProspectExtras } from "@/lib/db/ensure-prospect-extras";
+import { ensureProspectDpe } from "@/lib/db/ensure-prospect-dpe";
 import { getCurrentUser } from "@/lib/auth/session";
 import { ensureAuth } from "@/lib/auth/guards";
 
@@ -26,6 +27,7 @@ const createSchema = z.object({
   customAddress: z.string().optional(),
   customLat: z.number().optional(),
   customLon: z.number().optional(),
+  numeroDpe: z.string().optional(),
   stage: z.enum(STAGE_VALUES).default("lead"),
   priority: z.number().int().min(1).max(3).default(2),
   estimatedValue: z.number().nullable().optional(),
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
   const guard = await ensureAuth();
   if (guard instanceof NextResponse) return guard;
   await ensureProspectExtras();
+  await ensureProspectDpe();
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
@@ -101,6 +104,19 @@ export async function POST(req: NextRequest) {
       );
     }
   }
+  // Pour les prospects maison/appart : déduplication par numero_dpe
+  if (d.numeroDpe && !d.coproId) {
+    const existing = await db.get<{ id: number }>(
+      "SELECT id FROM prospects WHERE numero_dpe = ? LIMIT 1",
+      [d.numeroDpe],
+    );
+    if (existing) {
+      return NextResponse.json(
+        { error: "already_exists", prospectId: existing.id },
+        { status: 409 },
+      );
+    }
+  }
 
   const tagsJson = d.tags ? JSON.stringify(d.tags) : null;
 
@@ -110,14 +126,16 @@ export async function POST(req: NextRequest) {
   const info = await db.run(
     `INSERT INTO prospects
       (copro_id, custom_label, custom_address, custom_lat, custom_lon,
+       numero_dpe,
        stage, priority, estimated_value, assigned_to, assigned_user_id, tags)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       d.coproId ?? null,
       d.customLabel ?? null,
       d.customAddress ?? null,
       d.customLat ?? null,
       d.customLon ?? null,
+      d.numeroDpe ?? null,
       d.stage,
       d.priority,
       d.estimatedValue ?? null,

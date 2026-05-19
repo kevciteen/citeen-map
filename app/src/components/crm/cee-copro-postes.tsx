@@ -62,8 +62,19 @@ export function CeeCoproPostes({
 }) {
   const [priceStd, setPriceStd] = useState<string>("7");
   const [pricePrecaire, setPricePrecaire] = useState<string>("9");
+  const defaultYear = mapPeriodToYear(periodeConstruction);
+  const [yearOverride, setYearOverride] = useState<string>(
+    defaultYear ? String(defaultYear) : "",
+  );
+  const defaultSurface = nbLotsHabitation
+    ? Math.max(40, Math.round(60))
+    : 60;
+  const [surfaceOverride, setSurfaceOverride] = useState<string>(
+    String(defaultSurface),
+  );
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [actionsOverride, setActionsOverride] = useState<Record<string, Action>>({});
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
 
   const aggregates = useMemo(() => {
     if (!matchedIndividuals || matchedIndividuals.length === 0) {
@@ -104,17 +115,21 @@ export function CeeCoproPostes({
 
   // Project commun (housingType + incomeBracket sont injectés au moment d'évaluer)
   const baseProject = useMemo<Omit<Project, "incomeBracket" | "housingType">>(() => {
+    const yearFromOverride = Number(yearOverride);
     const yearFromPeriod = mapPeriodToYear(periodeConstruction);
-    const aptSurface = aggregates.surfaceMoyenne
-      ? Math.round(aggregates.surfaceMoyenne)
-      : 60; // surface moyenne par appartement
+    const year = Number.isFinite(yearFromOverride) && yearFromOverride > 0
+      ? yearFromOverride
+      : (yearFromPeriod ?? undefined);
+    const surfaceFromOverride = Number(surfaceOverride);
+    const aptSurface = Number.isFinite(surfaceFromOverride) && surfaceFromOverride > 0
+      ? surfaceFromOverride
+      : (aggregates.surfaceMoyenne ? Math.round(aggregates.surfaceMoyenne) : 60);
     return {
       buildingType: "Habitation",
       postalCode: codePostal ?? undefined,
-      constructionYear: yearFromPeriod ?? undefined,
-      // On utilise la surface moyenne d'un appartement (et non la surface totale
-      // de l'immeuble), pour que les fiches qui calculent par lot soient
-      // dimensionnées correctement.
+      constructionYear: year,
+      // Surface "type" d'un appartement de la copro — utilisée par les fiches
+      // qui calculent par lot. On la rend éditable depuis le bandeau.
       buildingSurface: aptSurface,
       householdSize: 3,
       mwhCumacPrice: Number.parseFloat(priceStd.replace(",", ".")) || 7,
@@ -130,6 +145,8 @@ export function CeeCoproPostes({
     aggregates.surfaceMoyenne,
     priceStd,
     pricePrecaire,
+    yearOverride,
+    surfaceOverride,
   ]);
 
   // Actions par défaut + overrides
@@ -242,23 +259,50 @@ export function CeeCoproPostes({
     [visibleResults],
   );
 
-  const totalsStd = useMemo(() => {
-    return sumEstimates(
-      visibleResults.filter((r) => r.evaluation.status === "Eligible"),
-    );
-  }, [visibleResults]);
+  // Si l'utilisateur a coché des fiches → on cumule SA sélection
+  // Sinon → cumul des fiches éligibles par défaut
+  const hasSelection = selectedCodes.size > 0;
 
-  const totalsModest = useMemo(() => {
-    const eligibleStdCodes = new Set(
+  const eligibleStdCodes = useMemo(() => {
+    return new Set(
       visibleResults
         .filter((r) => r.evaluation.status === "Eligible")
         .map((r) => r.sheet.code),
     );
-    const matching = resultsModest.filter((r) =>
-      eligibleStdCodes.has(r.sheet.code),
+  }, [visibleResults]);
+
+  const cumulCodes = useMemo(() => {
+    if (hasSelection) return selectedCodes;
+    return eligibleStdCodes;
+  }, [hasSelection, selectedCodes, eligibleStdCodes]);
+
+  const totalsStd = useMemo(() => {
+    return sumEstimates(
+      visibleResults.filter((r) => cumulCodes.has(r.sheet.code)),
     );
+  }, [visibleResults, cumulCodes]);
+
+  const totalsModest = useMemo(() => {
+    const matching = resultsModest.filter((r) => cumulCodes.has(r.sheet.code));
     return sumEstimates(matching);
-  }, [visibleResults, resultsModest]);
+  }, [resultsModest, cumulCodes]);
+
+  const toggleSelected = (code: string) => {
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const selectAllEligible = () => {
+    setSelectedCodes(new Set(eligibleStdCodes));
+  };
+
+  const clearSelection = () => {
+    setSelectedCodes(new Set());
+  };
 
   const eligibleCount = visibleResults.filter(
     (r) => r.evaluation.status === "Eligible",
@@ -300,78 +344,124 @@ export function CeeCoproPostes({
     <div className="space-y-3">
       {/* Bandeau principal */}
       <div className="rounded-lg bg-gradient-to-br from-emerald-50 to-white p-3 ring-1 ring-emerald-200">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="mb-1 flex items-center gap-1 text-xs font-bold text-emerald-900">
-              <Coins className="h-3.5 w-3.5" />
-              Estimation CEE — fiches éligibles uniquement
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-              <StatusPill count={eligibleCount} label="éligibles" tone="emerald" />
-              <StatusPill count={confirmCount} label="à compléter" tone="amber" />
-            </div>
-            {totalsStd.kwhCumac > 0 ? (
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <div className="rounded-md bg-slate-100 p-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-700">
-                    Revenus standard
-                  </div>
-                  <div className="mt-0.5 text-lg font-black tabular-nums text-slate-900">
-                    {formatEuros(totalsStd.euroAmount)}
-                  </div>
-                  <div className="text-[10px] text-slate-600">
-                    {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
-                  </div>
-                </div>
-                <div className="rounded-md bg-purple-100 p-2 ring-1 ring-purple-300">
-                  <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-purple-700">
-                    <Sparkles className="h-3 w-3" />
-                    Ménages très modestes
-                  </div>
-                  <div className="mt-0.5 text-lg font-black tabular-nums text-purple-900">
-                    {formatEuros(totalsModest.euroAmount)}
-                  </div>
-                  <div className="text-[10px] text-purple-700">
-                    {Math.round(totalsModest.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac · avec Coups de pouce
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            <p className="mt-1 text-[10px] text-emerald-800/70">
-              Somme des fiches éligibles
-              {aggregates.energieDominante
-                ? ` · énergie chauffage dominante "${aggregates.energieDominante}"`
-                : ""}
-            </p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1 text-xs font-bold text-emerald-900">
+            <Coins className="h-3.5 w-3.5" />
+            {hasSelection
+              ? `Mon panier de travaux (${selectedCodes.size} fiches sélectionnées)`
+              : "Estimation CEE — fiches éligibles uniquement"}
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Prix CEE (€/MWh cumac)
-            </label>
-            <div className="flex gap-2">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] text-muted-foreground">Standard</span>
-                <Input
-                  value={priceStd}
-                  onChange={(e) => setPriceStd(e.target.value)}
-                  type="number"
-                  step="0.1"
-                  className="h-7 w-20 text-[11px]"
-                />
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] text-muted-foreground">Précaire</span>
-                <Input
-                  value={pricePrecaire}
-                  onChange={(e) => setPricePrecaire(e.target.value)}
-                  type="number"
-                  step="0.1"
-                  className="h-7 w-20 text-[11px]"
-                />
-              </div>
-            </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <StatusPill count={eligibleCount} label="éligibles" tone="emerald" />
+            <StatusPill count={confirmCount} label="à compléter" tone="amber" />
+            {hasSelection ? (
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold hover:bg-slate-300"
+              >
+                Vider la sélection
+              </button>
+            ) : eligibleCount > 0 ? (
+              <button
+                type="button"
+                onClick={selectAllEligible}
+                className="rounded-full bg-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-900 hover:bg-emerald-300"
+              >
+                Tout cocher
+              </button>
+            ) : null}
           </div>
         </div>
+
+        {totalsStd.kwhCumac > 0 || hasSelection ? (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-md bg-slate-100 p-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-700">
+                Revenus standard
+              </div>
+              <div className="mt-0.5 text-lg font-black tabular-nums text-slate-900">
+                {formatEuros(totalsStd.euroAmount)}
+              </div>
+              <div className="text-[10px] text-slate-600">
+                {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
+              </div>
+            </div>
+            <div className="rounded-md bg-purple-100 p-2 ring-1 ring-purple-300">
+              <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-purple-700">
+                <Sparkles className="h-3 w-3" />
+                Ménages très modestes
+              </div>
+              <div className="mt-0.5 text-lg font-black tabular-nums text-purple-900">
+                {formatEuros(totalsModest.euroAmount)}
+              </div>
+              <div className="text-[10px] text-purple-700">
+                {Math.round(totalsModest.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac · avec Coups de pouce
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Inputs paramètres copro */}
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Année construction
+            </label>
+            <Input
+              value={yearOverride}
+              onChange={(e) => setYearOverride(e.target.value)}
+              type="number"
+              placeholder={defaultYear ? String(defaultYear) : "ex: 1965"}
+              className="h-7 text-[11px]"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Surface appart. moy. (m²)
+            </label>
+            <Input
+              value={surfaceOverride}
+              onChange={(e) => setSurfaceOverride(e.target.value)}
+              type="number"
+              placeholder="60"
+              className="h-7 text-[11px]"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Prix CEE std (€/MWh)
+            </label>
+            <Input
+              value={priceStd}
+              onChange={(e) => setPriceStd(e.target.value)}
+              type="number"
+              step="0.1"
+              className="h-7 text-[11px]"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Prix CEE précaire (€/MWh)
+            </label>
+            <Input
+              value={pricePrecaire}
+              onChange={(e) => setPricePrecaire(e.target.value)}
+              type="number"
+              step="0.1"
+              className="h-7 text-[11px]"
+            />
+          </div>
+        </div>
+
+        <p className="mt-2 text-[10px] text-emerald-800/70">
+          {hasSelection
+            ? `Cumul des ${selectedCodes.size} fiches cochées ci-dessous.`
+            : "Cumul automatique des fiches éligibles. Coche des fiches dans la liste pour personnaliser ton panier."}
+          {aggregates.energieDominante
+            ? ` · Énergie dominante "${aggregates.energieDominante}"`
+            : ""}
+        </p>
       </div>
 
       <p className="text-[10px] italic text-muted-foreground">
@@ -419,6 +509,8 @@ export function CeeCoproPostes({
                         housingType: "Appartement",
                       } as Project
                     }
+                    selected={selectedCodes.has(r.sheet.code)}
+                    onToggleSelected={() => toggleSelected(r.sheet.code)}
                     onUpdateAction={(key, value) =>
                       updateAction(r.sheet.code, key, value)
                     }
@@ -440,12 +532,16 @@ function SheetRow({
   resultModest,
   currentAction,
   project,
+  selected,
+  onToggleSelected,
   onUpdateAction,
 }: {
   resultStd: FullEvaluateResult;
   resultModest: FullEvaluateResult;
   currentAction: Action;
   project: Project;
+  selected: boolean;
+  onToggleSelected: () => void;
   onUpdateAction: (key: string, value: unknown) => void;
 }) {
   const { evaluation, sheet } = resultStd;
@@ -465,14 +561,29 @@ function SheetRow({
   return (
     <div
       className={cn(
-        "rounded-lg border bg-card px-3 py-2 text-xs",
-        isEligible
-          ? "border-emerald-300 bg-emerald-50/40"
-          : "border-amber-200 bg-amber-50/30",
+        "rounded-lg border bg-card px-3 py-2 text-xs transition",
+        selected
+          ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-300"
+          : isEligible
+            ? "border-emerald-300 bg-emerald-50/40"
+            : "border-amber-200 bg-amber-50/30",
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
+        <div className="flex flex-1 items-start gap-2 min-w-0">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelected}
+            disabled={!isEligible}
+            title={
+              isEligible
+                ? "Inclure cette fiche dans le panier"
+                : "Complète d'abord la fiche pour la rendre éligible et l'ajouter au panier"
+            }
+            className="mt-0.5 h-4 w-4 shrink-0 disabled:opacity-30"
+          />
+          <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-mono text-[10px] font-bold text-muted-foreground">
               {sheet.code}
@@ -525,6 +636,7 @@ function SheetRow({
               </div>
             </div>
           ) : null}
+        </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {/* Deux colonnes de montants */}

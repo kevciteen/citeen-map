@@ -488,6 +488,15 @@ function MaisonProspectCard({
     if (Array.isArray(tags) && tags.includes("appartement")) kind = "appartement";
   } catch {}
   const address = (prospect.custom_address ?? prospect.custom_label ?? "") as string;
+  const numeroDpe = (prospect.numero_dpe ?? null) as string | null;
+  const segment = kind === "appartement" ? "appartements" : "maisons";
+  // Si on a stocké le numero_dpe lors de l'ajout au pipeline, on pointe
+  // directement sur la fiche détaillée. Sinon, on ouvre la page de
+  // recherche avec l'adresse pré-remplie (fallback pour prospects créés
+  // avant la colonne numero_dpe).
+  const detailHref = numeroDpe
+    ? `/${segment}/${encodeURIComponent(numeroDpe)}`
+    : `/${segment}?q=${encodeURIComponent(address)}`;
 
   return (
     <>
@@ -515,11 +524,17 @@ function MaisonProspectCard({
               }
             />
           ) : null}
+          {numeroDpe ? (
+            <Row
+              label="N° DPE"
+              value={<span className="font-mono text-[10px]">{numeroDpe}</span>}
+            />
+          ) : null}
           <a
-            href={`/${kind === "appartement" ? "appartements" : "maisons"}?q=${encodeURIComponent(address)}`}
+            href={detailHref}
             className="mt-2 block w-full rounded-md bg-primary px-3 py-1.5 text-center text-xs font-semibold text-primary-foreground hover:bg-primary/90"
           >
-            Ouvrir la fiche détaillée
+            {numeroDpe ? "Ouvrir la fiche détaillée" : "Rechercher la fiche détaillée"}
           </a>
         </CardContent>
       </Card>
