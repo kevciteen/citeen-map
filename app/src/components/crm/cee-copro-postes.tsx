@@ -36,18 +36,15 @@ type SheetFamily =
   | "Equipement"
   | "Services";
 
-type IncomeKey = "veryModest" | "modest" | "intermediate" | "high";
-
 /**
  * Estimation CEE complète pour une copropriété d'habitation.
  *
- * Comportement :
- *  - Cache les fiches "Non éligibles" et "Potentiellement éligibles"
- *  - Affiche uniquement Éligibles + À confirmer
- *  - Permet de compléter les champs manquants sur les fiches "À confirmer"
- *    via un mini formulaire dynamique → recalcul live
- *  - Prix kWh cumac saisissable dans le bandeau (par défaut 7 € marché)
- *  - Affiche les coups de pouce (×2, ×3, ×4, ×5) avec détail standard vs bonifié
+ * - Cache les fiches "Non éligibles" et "Potentiellement éligibles"
+ * - Affiche en parallèle Standard (revenus intermédiaires) ET Très modeste
+ *   (avec Coup de pouce ×2/×3/×4/×5 selon fiche) pour chaque fiche
+ * - Mini formulaire pour compléter les champs manquants des "À confirmer"
+ *   → recalcul live → bascule en Éligible
+ * - Prix kWh cumac standard et précaire saisissables dans le bandeau
  */
 export function CeeCoproPostes({
   classeDpeCollective,
@@ -62,15 +59,11 @@ export function CeeCoproPostes({
   codePostal: string | null;
   matchedIndividuals?: IndividualLite[];
 }) {
-  const [income, setIncome] = useState<IncomeKey>("intermediate");
   const [priceStd, setPriceStd] = useState<string>("7");
   const [pricePrecaire, setPricePrecaire] = useState<string>("9");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [actionsOverride, setActionsOverride] = useState<Record<string, Action>>(
-    {},
-  );
+  const [actionsOverride, setActionsOverride] = useState<Record<string, Action>>({});
 
-  // Énergie chauffage dominante depuis DPE matchés
   const aggregates = useMemo(() => {
     if (!matchedIndividuals || matchedIndividuals.length === 0) {
       return {
@@ -108,7 +101,8 @@ export function CeeCoproPostes({
     };
   }, [matchedIndividuals]);
 
-  const project = useMemo<Project>(() => {
+  // Project commun (toutes les valeurs sauf incomeBracket)
+  const baseProject = useMemo<Omit<Project, "incomeBracket">>(() => {
     const yearFromPeriod = mapPeriodToYear(periodeConstruction);
     const totalSurface =
       aggregates.surfaceMoyenne && nbLotsHabitation
@@ -123,7 +117,6 @@ export function CeeCoproPostes({
       constructionYear: yearFromPeriod ?? undefined,
       buildingSurface: totalSurface || undefined,
       householdSize: 3,
-      incomeBracket: income,
       mwhCumacPrice: Number.parseFloat(priceStd.replace(",", ".")) || 7,
       mwhCumacPricePrecarious:
         Number.parseFloat(pricePrecaire.replace(",", ".")) || 9,
@@ -136,12 +129,11 @@ export function CeeCoproPostes({
     periodeConstruction,
     aggregates.surfaceMoyenne,
     nbLotsHabitation,
-    income,
     priceStd,
     pricePrecaire,
   ]);
 
-  // Actions par défaut + overrides utilisateur
+  // Actions par défaut + overrides
   const actionsMerged = useMemo<Record<string, Action>>(() => {
     const dpe = (classeDpeCollective ?? "").toUpperCase();
     const classJump =
@@ -152,16 +144,17 @@ export function CeeCoproPostes({
         priorWorkStageDone: "Non",
         secondaryResidence: "Non",
         anahRenovationRoute: "Non",
+        coupDePoucePrimaryResidence: "Oui",
       },
       "BAR-TH-175": {
         classJumpCount: classJump,
         priorWorkStageDone: "Non",
         secondaryResidence: "Non",
         anahRenovationRoute: "Non",
+        coupDePoucePrimaryResidence: "Oui",
       },
       "BAR-TH-177": { classJumpCount: classJump },
     };
-    // Merge overrides over defaults
     const merged: Record<string, Action> = { ...defaults };
     for (const [code, override] of Object.entries(actionsOverride)) {
       merged[code] = { ...(defaults[code] ?? {}), ...override };
@@ -169,22 +162,41 @@ export function CeeCoproPostes({
     return merged;
   }, [classeDpeCollective, actionsOverride]);
 
-  const results = useMemo(() => {
-    return evaluateAllSheets(project, {
-      buildingTypes: ["Habitation"],
-      actions: actionsMerged,
-    });
-  }, [project, actionsMerged]);
+  // === Évaluation 2 fois : intermediate + veryModest ===================
+  const resultsStd = useMemo(
+    () =>
+      evaluateAllSheets(
+        { ...baseProject, incomeBracket: "intermediate" } as Project,
+        { buildingTypes: ["Habitation"], actions: actionsMerged },
+      ),
+    [baseProject, actionsMerged],
+  );
 
-  // Filtre : on cache Non éligible + Potentiellement éligible
+  const resultsModest = useMemo(
+    () =>
+      evaluateAllSheets(
+        { ...baseProject, incomeBracket: "veryModest" } as Project,
+        { buildingTypes: ["Habitation"], actions: actionsMerged },
+      ),
+    [baseProject, actionsMerged],
+  );
+
+  // Index par code pour zip
+  const modestByCode = useMemo(() => {
+    const m = new Map<string, FullEvaluateResult>();
+    for (const r of resultsModest) m.set(r.sheet.code, r);
+    return m;
+  }, [resultsModest]);
+
+  // Filtre : on cache Non éligible + Potentiellement éligible (sur standard)
   const visibleResults = useMemo(
     () =>
-      results.filter(
+      resultsStd.filter(
         (r) =>
           r.evaluation.status === "Eligible" ||
           r.evaluation.status === "Eligibilite a confirmer",
       ),
-    [results],
+    [resultsStd],
   );
 
   const grouped = useMemo(
@@ -192,12 +204,23 @@ export function CeeCoproPostes({
     [visibleResults],
   );
 
-  const totals = useMemo(() => {
-    const eligibles = visibleResults.filter(
-      (r) => r.evaluation.status === "Eligible" && r.evaluation.kwhCumac != null,
+  const totalsStd = useMemo(() => {
+    return sumEstimates(
+      visibleResults.filter((r) => r.evaluation.status === "Eligible"),
     );
-    return sumEstimates(eligibles);
   }, [visibleResults]);
+
+  const totalsModest = useMemo(() => {
+    const eligibleStdCodes = new Set(
+      visibleResults
+        .filter((r) => r.evaluation.status === "Eligible")
+        .map((r) => r.sheet.code),
+    );
+    const matching = resultsModest.filter((r) =>
+      eligibleStdCodes.has(r.sheet.code),
+    );
+    return sumEstimates(matching);
+  }, [visibleResults, resultsModest]);
 
   const eligibleCount = visibleResults.filter(
     (r) => r.evaluation.status === "Eligible",
@@ -247,46 +270,49 @@ export function CeeCoproPostes({
             </div>
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <StatusPill count={eligibleCount} label="éligibles" tone="emerald" />
-              <StatusPill count={confirmCount} label="à confirmer" tone="amber" />
+              <StatusPill count={confirmCount} label="à compléter" tone="amber" />
             </div>
-            {totals.kwhCumac > 0 ? (
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-2xl font-black tabular-nums text-emerald-900">
-                  {Math.round(totals.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
-                </span>
-                <span className="text-sm font-bold text-emerald-700">
-                  ≈ {formatEuros(totals.euroAmount)} de prime CEE
-                </span>
+            {totalsStd.kwhCumac > 0 ? (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div className="rounded-md bg-slate-100 p-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-700">
+                    Revenus standard
+                  </div>
+                  <div className="mt-0.5 text-lg font-black tabular-nums text-slate-900">
+                    {formatEuros(totalsStd.euroAmount)}
+                  </div>
+                  <div className="text-[10px] text-slate-600">
+                    {Math.round(totalsStd.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac
+                  </div>
+                </div>
+                <div className="rounded-md bg-purple-100 p-2 ring-1 ring-purple-300">
+                  <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-purple-700">
+                    <Sparkles className="h-3 w-3" />
+                    Ménages très modestes
+                  </div>
+                  <div className="mt-0.5 text-lg font-black tabular-nums text-purple-900">
+                    {formatEuros(totalsModest.euroAmount)}
+                  </div>
+                  <div className="text-[10px] text-purple-700">
+                    {Math.round(totalsModest.kwhCumac / 1000).toLocaleString("fr-FR")} MWh cumac · avec Coups de pouce
+                  </div>
+                </div>
               </div>
             ) : null}
             <p className="mt-1 text-[10px] text-emerald-800/70">
-              Somme des fiches éligibles · revenus <strong>{income}</strong>
+              Somme des fiches éligibles
               {aggregates.energieDominante
-                ? ` · énergie dominante "${aggregates.energieDominante}"`
+                ? ` · énergie chauffage dominante "${aggregates.energieDominante}"`
                 : ""}
             </p>
           </div>
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Revenus copro
-              </label>
-              <select
-                value={income}
-                onChange={(e) => setIncome(e.target.value as IncomeKey)}
-                className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
-              >
-                <option value="veryModest">Très modestes</option>
-                <option value="modest">Modestes</option>
-                <option value="intermediate">Intermédiaires</option>
-                <option value="high">Supérieurs</option>
-              </select>
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Prix CEE (€/MWh cumac)
+            </label>
             <div className="flex gap-2">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Prix CEE std (€/MWh)
-                </label>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[9px] text-muted-foreground">Standard</span>
                 <Input
                   value={priceStd}
                   onChange={(e) => setPriceStd(e.target.value)}
@@ -295,10 +321,8 @@ export function CeeCoproPostes({
                   className="h-7 w-20 text-[11px]"
                 />
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Prix CEE précaire (€/MWh)
-                </label>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[9px] text-muted-foreground">Précaire</span>
                 <Input
                   value={pricePrecaire}
                   onChange={(e) => setPricePrecaire(e.target.value)}
@@ -313,12 +337,12 @@ export function CeeCoproPostes({
       </div>
 
       <p className="text-[10px] italic text-muted-foreground">
-        Estimation indicative — audit énergétique recommandé avant engagement.
-        Décisions AG : majorité absolue (art. 24) ou article 25 selon les
-        travaux. Cumul possible avec MaPrimeRénov' Copro selon revenus.
+        Audit énergétique recommandé avant engagement. Décisions AG : majorité
+        absolue (art. 24) ou article 25 selon les travaux. Cumul possible avec
+        MaPrimeRénov' Copro selon revenus.
       </p>
 
-      {/* Listing par famille */}
+      {/* Liste par famille */}
       {familyOrder.map((family) => {
         const items = grouped[family] ?? [];
         if (items.length === 0) return null;
@@ -347,7 +371,8 @@ export function CeeCoproPostes({
                 {items.map((r) => (
                   <SheetRow
                     key={r.sheet.code}
-                    result={r}
+                    resultStd={r}
+                    resultModest={modestByCode.get(r.sheet.code) ?? r}
                     currentAction={actionsMerged[r.sheet.code] ?? {}}
                     onUpdateAction={(key, value) =>
                       updateAction(r.sheet.code, key, value)
@@ -366,18 +391,29 @@ export function CeeCoproPostes({
 // === Sub-components ====================================================
 
 function SheetRow({
-  result,
+  resultStd,
+  resultModest,
   currentAction,
   onUpdateAction,
 }: {
-  result: FullEvaluateResult;
+  resultStd: FullEvaluateResult;
+  resultModest: FullEvaluateResult;
   currentAction: Action;
   onUpdateAction: (key: string, value: unknown) => void;
 }) {
-  const { evaluation, sheet } = result;
+  const { evaluation, sheet } = resultStd;
+  const evMod = resultModest.evaluation;
   const isEligible = evaluation.status === "Eligible";
   const [editing, setEditing] = useState(false);
-  const cdp = evaluation.coupDePouce;
+  const cdp = evMod.coupDePouce ?? evaluation.coupDePouce;
+
+  // Toutes les missing sur les 2 évaluations (std + modeste). On les déduplique.
+  const allMissing = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of evaluation.missing) if (m) set.add(m);
+    for (const m of evMod.missing) if (m) set.add(m);
+    return [...set];
+  }, [evaluation.missing, evMod.missing]);
 
   return (
     <div
@@ -403,13 +439,18 @@ function SheetRow({
               {evaluation.calculationLabel}
             </p>
           ) : null}
-          {evaluation.missing.length > 0 ? (
+          {allMissing.length > 0 ? (
             <ul className="mt-1 space-y-0.5">
-              {evaluation.missing.slice(0, 3).map((m, i) => (
+              {allMissing.slice(0, 5).map((m, i) => (
                 <li key={i} className="text-[10px] text-amber-800">
                   ⚠ {m}
                 </li>
               ))}
+              {allMissing.length > 5 ? (
+                <li className="text-[10px] italic text-amber-700">
+                  + {allMissing.length - 5} autres…
+                </li>
+              ) : null}
             </ul>
           ) : null}
           {/* Coup de pouce */}
@@ -432,33 +473,40 @@ function SheetRow({
                       : "bg-amber-500 text-white",
                   )}
                 >
-                  {cdp.status}
+                  {String(cdp.status)}
                 </span>
               </div>
-              {evaluation.standardKwhCumac != null &&
-              evaluation.kwhCumac != null &&
-              evaluation.kwhCumac > evaluation.standardKwhCumac ? (
-                <p className="mt-0.5 font-mono text-[9px] opacity-80">
-                  Standard : {formatKwh(evaluation.standardKwhCumac)} →
-                  bonifié : {formatKwh(evaluation.kwhCumac)} kWh cumac
-                </p>
-              ) : null}
             </div>
           ) : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          {evaluation.kwhCumac != null ? (
-            <>
-              <span className="text-sm font-black tabular-nums text-emerald-900">
+          {/* Deux colonnes de montants */}
+          <div className="grid grid-cols-2 gap-1 text-right">
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-600">
+                Standard
+              </div>
+              <div className="text-sm font-black tabular-nums text-slate-900">
                 {formatEuros(evaluation.euroAmount)}
-              </span>
-              <span className="text-[10px] tabular-nums text-muted-foreground">
-                {formatKwh(evaluation.kwhCumac)} kWh cumac
-              </span>
-            </>
-          ) : null}
+              </div>
+              <div className="text-[9px] tabular-nums text-slate-500">
+                {formatKwh(evaluation.kwhCumac)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-purple-700">
+                Très modeste
+              </div>
+              <div className="text-sm font-black tabular-nums text-purple-900">
+                {formatEuros(evMod.euroAmount)}
+              </div>
+              <div className="text-[9px] tabular-nums text-purple-600">
+                {formatKwh(evMod.kwhCumac)}
+              </div>
+            </div>
+          </div>
           <StatusBadge status={evaluation.status} />
-          {!isEligible || evaluation.missing.length > 0 ? (
+          {allMissing.length > 0 ? (
             <button
               type="button"
               onClick={() => setEditing(!editing)}
@@ -471,11 +519,10 @@ function SheetRow({
         </div>
       </div>
 
-      {/* Mini formulaire dynamique */}
       {editing ? (
         <ActionEditor
           code={sheet.code}
-          missing={evaluation.missing}
+          missing={allMissing}
           currentAction={currentAction}
           onUpdate={onUpdateAction}
         />
@@ -485,9 +532,10 @@ function SheetRow({
 }
 
 /**
- * Mini formulaire dynamique : pour chaque champ identifié dans les `missing`
- * strings, on génère un input adapté. Heuristique simple basée sur les
- * patterns du simulateur source.
+ * Mini formulaire dynamique pour compléter les `missing[]` d'une fiche.
+ * Combine heuristique (patterns connus → inputs typés) + fallback (input
+ * texte libre étiqueté avec la string missing). L'utilisateur peut donc
+ * combler n'importe quel champ.
  */
 function ActionEditor({
   code,
@@ -500,18 +548,12 @@ function ActionEditor({
   currentAction: Action;
   onUpdate: (key: string, value: unknown) => void;
 }) {
-  // Inputs détectés depuis les missing
-  const inputs = inferInputsFromMissing(code, missing);
+  const { typed, untyped } = useMemo(
+    () => splitInputs(code, missing),
+    [code, missing],
+  );
 
-  if (inputs.length === 0) {
-    return (
-      <div className="mt-2 rounded bg-amber-100/60 p-2 text-[10px] text-amber-900">
-        Cette fiche nécessite des paramètres spécifiques que le simulateur
-        rapide ne couvre pas. Pour un calcul complet, utilise la page
-        /simulateur-cee dédiée (à venir).
-      </div>
-    );
-  }
+  if (typed.length === 0 && untyped.length === 0) return null;
 
   return (
     <div className="mt-2 rounded-md bg-amber-100/60 p-2">
@@ -519,7 +561,7 @@ function ActionEditor({
         Compléter pour calculer
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {inputs.map((input) => (
+        {typed.map((input) => (
           <div key={input.key} className="flex flex-col gap-0.5">
             <label className="text-[9px] font-semibold text-amber-900">
               {input.label}
@@ -547,12 +589,33 @@ function ActionEditor({
             )}
           </div>
         ))}
+        {/* Fallback : inputs texte libres pour les missing non-typés */}
+        {untyped.map((mraw, idx) => {
+          const key = makeKeyFromLabel(mraw);
+          return (
+            <div key={`untyped-${idx}`} className="col-span-2 flex flex-col gap-0.5">
+              <label className="text-[9px] font-semibold text-amber-900">
+                {mraw}
+              </label>
+              <Input
+                value={String(currentAction[key] ?? "")}
+                onChange={(e) => onUpdate(key, e.target.value)}
+                type="text"
+                placeholder="Saisir la valeur…"
+                className="h-7 text-[11px]"
+              />
+              <span className="text-[9px] italic text-amber-700">
+                champ libre · key = <code className="font-mono">{key}</code>
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// === Heuristique missing → input ========================================
+// === Heuristique missing → input (étendue) =============================
 
 interface InputSpec {
   key: string;
@@ -561,21 +624,34 @@ interface InputSpec {
   options?: string[];
 }
 
-function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
-  const specs: InputSpec[] = [];
-  const seen = new Set<string>();
+function splitInputs(
+  code: string,
+  missing: string[],
+): { typed: InputSpec[]; untyped: string[] } {
+  const typed: InputSpec[] = [];
+  const untyped: string[] = [];
+  const seenKeys = new Set<string>();
   const add = (spec: InputSpec) => {
-    if (seen.has(spec.key)) return;
-    seen.add(spec.key);
-    specs.push(spec);
+    if (seenKeys.has(spec.key)) return;
+    seenKeys.add(spec.key);
+    typed.push(spec);
   };
 
   for (const m of missing) {
-    const lc = m.toLowerCase();
-    if (lc.includes("surface") && lc.includes("logement")) {
+    const lc = m.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    let matched = true;
+    if (lc.includes("surface") && (lc.includes("logement") || lc.includes("habit"))) {
       add({ key: "buildingSurface", label: "Surface (m²)", kind: "number" });
-    } else if (lc.includes("surface") && lc.includes("chauffee")) {
+    } else if (lc.includes("surface") && lc.includes("chauf")) {
       add({ key: "heatedSurface", label: "Surface chauffée (m²)", kind: "number" });
+    } else if (lc.includes("surface") && (lc.includes("refroid") || lc.includes("clim"))) {
+      add({ key: "coolingSurface", label: "Surface refroidie (m²)", kind: "number" });
+    } else if (lc.includes("surface") && lc.includes("isole")) {
+      add({ key: "isolatedSurface", label: "Surface isolée (m²)", kind: "number" });
+    } else if (lc.includes("surface") && lc.includes("vitre")) {
+      add({ key: "glazedSurface", label: "Surface vitrée (m²)", kind: "number" });
+    } else if (lc.includes("surface")) {
+      add({ key: "surface", label: m, kind: "number" });
     } else if (lc.includes("saut") && lc.includes("classe")) {
       if (lc.includes("premiere etape")) {
         add({
@@ -593,11 +669,7 @@ function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
         });
       }
     } else if (lc.includes("annee de construction")) {
-      add({
-        key: "constructionYear",
-        label: "Année construction",
-        kind: "number",
-      });
+      add({ key: "constructionYear", label: "Année construction", kind: "number" });
     } else if (lc.includes("code postal")) {
       add({ key: "postalCode", label: "Code postal", kind: "text" });
     } else if (lc.includes("type d'habitation") || lc.includes("type d habitation")) {
@@ -619,22 +691,17 @@ function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
         kind: "select",
         options: ["Oui", "Non"],
       });
-    } else if (lc.includes("equipement remplace") || lc.includes("équipement remplacé")) {
+    } else if (lc.includes("equipement remplace") || lc.includes("equipement remplac")) {
       add({
         key: "coupDePouceReplacedEquipment",
         label: "Équipement remplacé",
         kind: "select",
-        options: [
-          "Chaudiere au charbon",
-          "Chaudiere au fioul",
-          "Chaudiere au gaz",
-          "Autre",
-        ],
+        options: ["Chaudiere au charbon", "Chaudiere au fioul", "Chaudiere au gaz", "Autre"],
       });
-    } else if (lc.includes("reseau de chaleur")) {
+    } else if (lc.includes("reseau de chaleur") && lc.includes("impossib")) {
       add({
         key: "coupDePouceHeatNetworkImpossible",
-        label: "Raccordement RdC impossible ?",
+        label: "Raccordement réseau de chaleur impossible ?",
         kind: "select",
         options: ["Oui", "Non"],
       });
@@ -650,7 +717,7 @@ function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
     } else if (lc.includes("anah") || lc.includes("maprimerenov")) {
       add({
         key: "anahRenovationRoute",
-        label: "Parcours Anah/MPR Ampleur ?",
+        label: "Parcours Anah / MPR Ampleur ?",
         kind: "select",
         options: ["Oui", "Non"],
       });
@@ -660,7 +727,7 @@ function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
     ) {
       add({
         key: "usage",
-        label: "Usage de la PAC",
+        label: "Usage",
         kind: "select",
         options: ["Chauffage", "Chauffage + ECS", "ECS uniquement"],
       });
@@ -685,10 +752,144 @@ function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
           "Autres secteurs",
         ],
       });
+    } else if (lc.includes("etas") || lc.includes("rendement saisonnier")) {
+      add({
+        key: "etasBand",
+        label: "Tranche d'Etas",
+        kind: "select",
+        options: [
+          "Inferieur a 111 %",
+          "De 111 % a moins de 126 %",
+          "De 126 % a moins de 175 %",
+          "175 % ou plus",
+        ],
+      });
+    } else if (lc.includes("cop") && !lc.includes("scop")) {
+      add({
+        key: "copBand",
+        label: "Tranche de COP",
+        kind: "select",
+        options: ["Inferieur a 3,4", "De 3,4 a moins de 4,5", "4,5 ou plus"],
+      });
+    } else if (lc.includes("scop")) {
+      add({ key: "scop", label: "SCOP", kind: "number" });
+    } else if (lc.includes("temperature")) {
+      add({
+        key: "temperatureType",
+        label: "Type température",
+        kind: "select",
+        options: ["Basse temperature", "Moyenne ou haute temperature"],
+      });
+    } else if (lc.includes("resistance thermique") || lc.includes(" r ")) {
+      add({ key: "thermalResistance", label: "Résistance R (m².K/W)", kind: "number" });
+    } else if (lc.includes("coefficient u") || lc.includes("uw")) {
+      add({ key: "uCoeff", label: "Coefficient U", kind: "number" });
+    } else if (lc.includes("classe du systeme") || lc.includes("classe installee")) {
+      add({
+        key: "installedClass",
+        label: "Classe du système installé",
+        kind: "select",
+        options: ["A", "B"],
+      });
+    } else if (lc.includes("zone climatique")) {
+      add({
+        key: "climateZone",
+        label: "Zone climatique",
+        kind: "select",
+        options: ["H1", "H2", "H3"],
+      });
+    } else if (lc.includes("nature de l'operation") || lc.includes("nature operation")) {
+      add({
+        key: "operationMode",
+        label: "Nature de l'opération",
+        kind: "select",
+        options: ["Achat d'un systeme neuf", "Amelioration d'un systeme existant"],
+      });
+    } else if (lc.includes("nombre de personnes") || lc.includes("foyer")) {
+      add({ key: "householdSize", label: "Taille du foyer", kind: "number" });
+    } else if (
+      lc.includes("type d'energie") ||
+      lc.includes("energie utilisee") ||
+      lc.includes("combustible") ||
+      lc.includes("electricite")
+    ) {
+      add({
+        key: "energyType",
+        label: "Type d'énergie",
+        kind: "select",
+        options: ["Combustible", "Electricite"],
+      });
+    } else if (lc.includes("ventilation")) {
+      add({
+        key: "ventilationType",
+        label: "Type de ventilation",
+        kind: "select",
+        options: [
+          "Simple flux autoreglable",
+          "Simple flux hygroreglable Type A",
+          "Simple flux hygroreglable Type B",
+          "Double flux",
+        ],
+      });
+    } else if (lc.includes("caisson")) {
+      add({
+        key: "caissonType",
+        label: "Type de caisson",
+        kind: "select",
+        options: ["Caisson basse consommation", "Caisson standard", "Caisson basse pression"],
+      });
+    } else if (lc.includes("type de generateur") || lc.includes("type generateur")) {
+      add({ key: "generatorType", label: "Type de générateur", kind: "text" });
+    } else if (lc.includes("nombre d'occupants")) {
+      add({ key: "occupantCount", label: "Nombre d'occupants", kind: "number" });
+    } else if (lc.includes("nombre de chambres") || lc.includes("chambres equipees")) {
+      add({ key: "roomCount", label: "Nombre de chambres", kind: "number" });
+    } else if (lc.includes("nombre de douches") || lc.includes("douches raccord")) {
+      add({ key: "showerCount", label: "Nombre de douches raccordées", kind: "number" });
+    } else if (lc.includes("part de la pac") || lc.includes("pac power")) {
+      add({
+        key: "pacPowerSharePercent",
+        label: "Part de la PAC (%)",
+        kind: "number",
+      });
+    } else if (lc.includes("comfort") || lc.includes("confort")) {
+      add({
+        key: "comfortPresent",
+        label: "Confort présent",
+        kind: "select",
+        options: ["Oui", "Non"],
+      });
+    } else if (lc.includes("equipement existant") && lc.includes("classe")) {
+      add({
+        key: "existingClassAtMostC",
+        label: "Système existant ≤ classe C",
+        kind: "select",
+        options: ["Oui", "Non"],
+      });
+    } else {
+      matched = false;
+    }
+    if (!matched) {
+      untyped.push(m);
     }
   }
 
-  return specs;
+  return { typed, untyped };
+}
+
+function makeKeyFromLabel(label: string): string {
+  return (
+    label
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(" ")
+      .slice(0, 4)
+      .map((w, i) => (i === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+      .join("") || "extraField"
+  );
 }
 
 // === Utils communs ======================================================

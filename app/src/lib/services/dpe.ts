@@ -394,12 +394,33 @@ function consoToClasse(conso: number | null): string {
 
 function isCollectifRecord(d: AdemeRecord): boolean {
   const t = String(d?.type_dpe || d?.type_dpe_batiment || "").toUpperCase();
-  return Boolean(
-    d?.numero_dpe_immeuble ||
-      d?.numero_dpe_immeuble_associe ||
-      t.includes("IMMEUBLE") ||
-      t.includes("COLLECTIF"),
-  );
+  const tb = String(d?.type_batiment || "").toUpperCase();
+
+  // Cas évidents : type_batiment dit "immeuble", ou type_dpe mentionne IMMEUBLE
+  if (tb === "IMMEUBLE") return true;
+  if (t.includes("IMMEUBLE")) return true;
+
+  // Piège : "Logement collectif" (DPE 6.3) = un appartement DANS un immeuble,
+  // PAS un DPE d'immeuble entier. On ne le considère collectif QUE si le
+  // type_batiment ne dit pas explicitement appartement ou maison.
+  if (t.includes("COLLECTIF") && tb !== "APPARTEMENT" && tb !== "MAISON") {
+    return true;
+  }
+
+  // numero_dpe_immeuble peut être renseigné sur un appartement pour le lier
+  // à son DPE d'immeuble parent. On exige donc qu'il ne s'agisse pas
+  // explicitement d'un logement individuel.
+  if (
+    d?.numero_dpe_immeuble &&
+    !d?.numero_dpe && // pas de numero individuel = c'est bien l'immeuble lui-même
+    tb !== "APPARTEMENT" &&
+    tb !== "MAISON"
+  ) {
+    return true;
+  }
+  if (d?.numero_dpe_immeuble_associe && tb === "IMMEUBLE") return true;
+
+  return false;
 }
 
 export type DpeIndividuel = {
@@ -597,8 +618,10 @@ function computeReelEtSimule(
   const collectifs = items.filter((x) => x.isCollectif);
   const indivs = items.filter((x) => !x.isCollectif);
 
+  // Tri des collectifs : par date décroissante. On n'exclut PAS ceux sans date
+  // (sinon un DPE collectif réel mais sans date_etablissement_dpe parsable
+  // est ignoré et on retombe sur le simulé). Date 0 = en queue mais conservé.
   const collectifRecent = collectifs
-    .filter((x) => x.date)
     .slice()
     .sort((a, b) => b.date - a.date)[0];
 
