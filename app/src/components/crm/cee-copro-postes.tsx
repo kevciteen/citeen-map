@@ -7,13 +7,14 @@ import {
   Shield,
   Wind,
   Layers,
-  ExternalLink,
   Cog,
   ChevronDown,
   ChevronUp,
-  Banknote,
+  Sparkles,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 import {
   evaluateAllSheets,
   groupByFamily,
@@ -28,14 +29,25 @@ type IndividualLite = {
   surface?: number | null;
 };
 
-type SheetFamily = "Bouquet" | "Enveloppe" | "Thermique" | "Equipement" | "Services";
+type SheetFamily =
+  | "Bouquet"
+  | "Enveloppe"
+  | "Thermique"
+  | "Equipement"
+  | "Services";
+
+type IncomeKey = "veryModest" | "modest" | "intermediate" | "high";
 
 /**
  * Estimation CEE complète pour une copropriété d'habitation.
  *
- * Appelle le moteur sur toutes les fiches résidentielles applicables avec
- * des hypothèses raisonnables (revenus intermédiaires par défaut, surface
- * extrapolée depuis les DPE individuels matchés).
+ * Comportement :
+ *  - Cache les fiches "Non éligibles" et "Potentiellement éligibles"
+ *  - Affiche uniquement Éligibles + À confirmer
+ *  - Permet de compléter les champs manquants sur les fiches "À confirmer"
+ *    via un mini formulaire dynamique → recalcul live
+ *  - Prix kWh cumac saisissable dans le bandeau (par défaut 7 € marché)
+ *  - Affiche les coups de pouce (×2, ×3, ×4, ×5) avec détail standard vs bonifié
  */
 export function CeeCoproPostes({
   classeDpeCollective,
@@ -50,12 +62,15 @@ export function CeeCoproPostes({
   codePostal: string | null;
   matchedIndividuals?: IndividualLite[];
 }) {
-  const [income, setIncome] = useState<"intermediate" | "modest" | "veryModest" | "high">(
-    "intermediate",
-  );
+  const [income, setIncome] = useState<IncomeKey>("intermediate");
+  const [priceStd, setPriceStd] = useState<string>("7");
+  const [pricePrecaire, setPricePrecaire] = useState<string>("9");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [actionsOverride, setActionsOverride] = useState<Record<string, Action>>(
+    {},
+  );
 
-  // Énergie chauffage dominante depuis les DPE matchés
+  // Énergie chauffage dominante depuis DPE matchés
   const aggregates = useMemo(() => {
     if (!matchedIndividuals || matchedIndividuals.length === 0) {
       return {
@@ -75,9 +90,8 @@ export function CeeCoproPostes({
         surfaceSum += ind.surface;
         surfaceN += 1;
       }
-      if ((ind.classe ?? "").toUpperCase() === "F" || (ind.classe ?? "").toUpperCase() === "G") {
-        passoires += 1;
-      }
+      const c = (ind.classe ?? "").toUpperCase();
+      if (c === "F" || c === "G") passoires += 1;
     }
     let dominant: string | null = null;
     let maxCount = 0;
@@ -94,7 +108,6 @@ export function CeeCoproPostes({
     };
   }, [matchedIndividuals]);
 
-  // Construction du projet pour le moteur CEE
   const project = useMemo<Project>(() => {
     const yearFromPeriod = mapPeriodToYear(periodeConstruction);
     const totalSurface =
@@ -111,89 +124,130 @@ export function CeeCoproPostes({
       buildingSurface: totalSurface || undefined,
       householdSize: 3,
       incomeBracket: income,
-      mwhCumacPrice: 7,
-      mwhCumacPricePrecarious: 9,
-      // Drapeaux systèmes — on suppose chauffage + ECS + ventilation présents
+      mwhCumacPrice: Number.parseFloat(priceStd.replace(",", ".")) || 7,
+      mwhCumacPricePrecarious:
+        Number.parseFloat(pricePrecaire.replace(",", ".")) || 9,
       projectSystemHeating: true,
       projectSystemDhw: true,
       projectSystemVentilation: true,
     };
-  }, [codePostal, periodeConstruction, aggregates.surfaceMoyenne, nbLotsHabitation, income]);
+  }, [
+    codePostal,
+    periodeConstruction,
+    aggregates.surfaceMoyenne,
+    nbLotsHabitation,
+    income,
+    priceStd,
+    pricePrecaire,
+  ]);
 
-  // Actions par défaut pour les fiches "bouquet" qui demandent un classJumpCount
-  const defaultActions = useMemo<Record<string, Action>>(() => {
-    const acts: Record<string, Action> = {};
+  // Actions par défaut + overrides utilisateur
+  const actionsMerged = useMemo<Record<string, Action>>(() => {
     const dpe = (classeDpeCollective ?? "").toUpperCase();
-    const classJump = dpe === "G" ? "4 ou plus" : dpe === "F" ? "3" : dpe === "E" ? "2" : "2";
-    acts["BAR-TH-174"] = {
-      classJumpCount: classJump,
-      priorWorkStageDone: "Non",
-      secondaryResidence: "Non",
-      anahRenovationRoute: "Non",
+    const classJump =
+      dpe === "G" ? "4 ou plus" : dpe === "F" ? "3" : dpe === "E" ? "2" : "2";
+    const defaults: Record<string, Action> = {
+      "BAR-TH-174": {
+        classJumpCount: classJump,
+        priorWorkStageDone: "Non",
+        secondaryResidence: "Non",
+        anahRenovationRoute: "Non",
+      },
+      "BAR-TH-175": {
+        classJumpCount: classJump,
+        priorWorkStageDone: "Non",
+        secondaryResidence: "Non",
+        anahRenovationRoute: "Non",
+      },
+      "BAR-TH-177": { classJumpCount: classJump },
     };
-    acts["BAR-TH-175"] = {
-      classJumpCount: classJump,
-      priorWorkStageDone: "Non",
-      secondaryResidence: "Non",
-      anahRenovationRoute: "Non",
-    };
-    return acts;
-  }, [classeDpeCollective]);
+    // Merge overrides over defaults
+    const merged: Record<string, Action> = { ...defaults };
+    for (const [code, override] of Object.entries(actionsOverride)) {
+      merged[code] = { ...(defaults[code] ?? {}), ...override };
+    }
+    return merged;
+  }, [classeDpeCollective, actionsOverride]);
 
   const results = useMemo(() => {
     return evaluateAllSheets(project, {
       buildingTypes: ["Habitation"],
-      actions: defaultActions,
+      actions: actionsMerged,
     });
-  }, [project, defaultActions]);
+  }, [project, actionsMerged]);
 
-  const grouped = useMemo(() => groupByFamily(results), [results]);
+  // Filtre : on cache Non éligible + Potentiellement éligible
+  const visibleResults = useMemo(
+    () =>
+      results.filter(
+        (r) =>
+          r.evaluation.status === "Eligible" ||
+          r.evaluation.status === "Eligibilite a confirmer",
+      ),
+    [results],
+  );
+
+  const grouped = useMemo(
+    () => groupByFamily(visibleResults),
+    [visibleResults],
+  );
+
   const totals = useMemo(() => {
-    const eligibles = results.filter(
+    const eligibles = visibleResults.filter(
       (r) => r.evaluation.status === "Eligible" && r.evaluation.kwhCumac != null,
     );
     return sumEstimates(eligibles);
-  }, [results]);
+  }, [visibleResults]);
 
-  const eligibleCount = results.filter((r) => r.evaluation.status === "Eligible").length;
-  const confirmCount = results.filter(
+  const eligibleCount = visibleResults.filter(
+    (r) => r.evaluation.status === "Eligible",
+  ).length;
+  const confirmCount = visibleResults.filter(
     (r) => r.evaluation.status === "Eligibilite a confirmer",
   ).length;
-  const potentialCount = results.filter(
-    (r) => r.evaluation.status === "Potentiellement eligible",
-  ).length;
 
-  if (results.length === 0) {
+  if (visibleResults.length === 0) {
     return (
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
         <div className="mb-1 flex items-center gap-1 font-semibold">
           <Info className="h-3.5 w-3.5" />
-          Aucune fiche évaluée
+          Aucune fiche éligible ou à confirmer
         </div>
         <p>
-          Le DPE collectif et la période de construction sont nécessaires. Cliquez
-          sur "Recalculer depuis l'ADEME" plus haut si pas encore chargé.
+          Vérifie que le DPE collectif est chargé (bouton "Recalculer depuis
+          l'ADEME" plus haut) et que la période de construction est renseignée.
         </p>
       </div>
     );
   }
 
-  const familyOrder: SheetFamily[] = ["Thermique", "Enveloppe", "Equipement", "Services"];
+  const familyOrder: SheetFamily[] = [
+    "Thermique",
+    "Enveloppe",
+    "Equipement",
+    "Services",
+  ];
+
+  const updateAction = (code: string, key: string, value: unknown) => {
+    setActionsOverride((prev) => ({
+      ...prev,
+      [code]: { ...(prev[code] ?? {}), [key]: value },
+    }));
+  };
 
   return (
     <div className="space-y-3">
-      {/* Header + résumé chiffré */}
+      {/* Bandeau principal */}
       <div className="rounded-lg bg-gradient-to-br from-emerald-50 to-white p-3 ring-1 ring-emerald-200">
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <div className="mb-1 flex items-center gap-1 text-xs font-bold text-emerald-900">
               <Coins className="h-3.5 w-3.5" />
-              Estimation CEE — {results.length} fiches du catalogue résidentiel
+              Estimation CEE — fiches éligibles uniquement
             </div>
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <StatusPill count={eligibleCount} label="éligibles" tone="emerald" />
               <StatusPill count={confirmCount} label="à confirmer" tone="amber" />
-              <StatusPill count={potentialCount} label="potentielles" tone="slate" />
             </div>
             {totals.kwhCumac > 0 ? (
               <div className="mt-2 flex items-baseline gap-2">
@@ -206,38 +260,65 @@ export function CeeCoproPostes({
               </div>
             ) : null}
             <p className="mt-1 text-[10px] text-emerald-800/70">
-              Somme des fiches éligibles · prix CEE 7 €/MWh cumac · revenus
-              <strong> {income}</strong>
+              Somme des fiches éligibles · revenus <strong>{income}</strong>
               {aggregates.energieDominante
                 ? ` · énergie dominante "${aggregates.energieDominante}"`
                 : ""}
             </p>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Revenus copro
-            </label>
-            <select
-              value={income}
-              onChange={(e) => setIncome(e.target.value as typeof income)}
-              className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
-            >
-              <option value="veryModest">Très modestes</option>
-              <option value="modest">Modestes</option>
-              <option value="intermediate">Intermédiaires</option>
-              <option value="high">Supérieurs</option>
-            </select>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Revenus copro
+              </label>
+              <select
+                value={income}
+                onChange={(e) => setIncome(e.target.value as IncomeKey)}
+                className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+              >
+                <option value="veryModest">Très modestes</option>
+                <option value="modest">Modestes</option>
+                <option value="intermediate">Intermédiaires</option>
+                <option value="high">Supérieurs</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Prix CEE std (€/MWh)
+                </label>
+                <Input
+                  value={priceStd}
+                  onChange={(e) => setPriceStd(e.target.value)}
+                  type="number"
+                  step="0.1"
+                  className="h-7 w-20 text-[11px]"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Prix CEE précaire (€/MWh)
+                </label>
+                <Input
+                  value={pricePrecaire}
+                  onChange={(e) => setPricePrecaire(e.target.value)}
+                  type="number"
+                  step="0.1"
+                  className="h-7 w-20 text-[11px]"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       <p className="text-[10px] italic text-muted-foreground">
-        Estimation indicative — un audit énergétique reste nécessaire pour confirmer
-        chaque opération. Décisions AG : majorité absolue (art. 24) ou article 25
-        selon les travaux. Cumul possible avec MaPrimeRénov' Copro selon revenus.
+        Estimation indicative — audit énergétique recommandé avant engagement.
+        Décisions AG : majorité absolue (art. 24) ou article 25 selon les
+        travaux. Cumul possible avec MaPrimeRénov' Copro selon revenus.
       </p>
 
-      {/* Liste par famille */}
+      {/* Listing par famille */}
       {familyOrder.map((family) => {
         const items = grouped[family] ?? [];
         if (items.length === 0) return null;
@@ -264,7 +345,14 @@ export function CeeCoproPostes({
             {isOpen ? (
               <div className="space-y-1.5">
                 {items.map((r) => (
-                  <SheetRow key={r.sheet.code} result={r} />
+                  <SheetRow
+                    key={r.sheet.code}
+                    result={r}
+                    currentAction={actionsMerged[r.sheet.code] ?? {}}
+                    onUpdateAction={(key, value) =>
+                      updateAction(r.sheet.code, key, value)
+                    }
+                  />
                 ))}
               </div>
             ) : null}
@@ -277,11 +365,19 @@ export function CeeCoproPostes({
 
 // === Sub-components ====================================================
 
-function SheetRow({ result }: { result: FullEvaluateResult }) {
+function SheetRow({
+  result,
+  currentAction,
+  onUpdateAction,
+}: {
+  result: FullEvaluateResult;
+  currentAction: Action;
+  onUpdateAction: (key: string, value: unknown) => void;
+}) {
   const { evaluation, sheet } = result;
   const isEligible = evaluation.status === "Eligible";
-  const isConfirm = evaluation.status === "Eligibilite a confirmer";
-  const isIneligible = evaluation.status === "Non eligible";
+  const [editing, setEditing] = useState(false);
+  const cdp = evaluation.coupDePouce;
 
   return (
     <div
@@ -289,11 +385,7 @@ function SheetRow({ result }: { result: FullEvaluateResult }) {
         "rounded-lg border bg-card px-3 py-2 text-xs",
         isEligible
           ? "border-emerald-300 bg-emerald-50/40"
-          : isConfirm
-            ? "border-amber-200 bg-amber-50/30"
-            : isIneligible
-              ? "border-red-200 bg-red-50/30 opacity-70"
-              : "border-border opacity-60",
+          : "border-amber-200 bg-amber-50/30",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -302,33 +394,59 @@ function SheetRow({ result }: { result: FullEvaluateResult }) {
             <span className="font-mono text-[10px] font-bold text-muted-foreground">
               {sheet.code}
             </span>
-            <span className="text-xs font-bold text-foreground">{sheet.title}</span>
+            <span className="text-xs font-bold text-foreground">
+              {sheet.title}
+            </span>
           </div>
           {evaluation.calculationLabel ? (
             <p className="mt-1 font-mono text-[10px] text-muted-foreground">
               {evaluation.calculationLabel}
             </p>
           ) : null}
-          {evaluation.blockers.length > 0 ? (
-            <ul className="mt-0.5 space-y-0.5">
-              {evaluation.blockers.slice(0, 2).map((b, i) => (
-                <li key={i} className="text-[10px] text-red-700">
-                  ⛔ {b}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {evaluation.missing.length > 0 && !isIneligible ? (
-            <ul className="mt-0.5 space-y-0.5">
-              {evaluation.missing.slice(0, 2).map((m, i) => (
-                <li key={i} className="text-[10px] text-amber-700">
+          {evaluation.missing.length > 0 ? (
+            <ul className="mt-1 space-y-0.5">
+              {evaluation.missing.slice(0, 3).map((m, i) => (
+                <li key={i} className="text-[10px] text-amber-800">
                   ⚠ {m}
                 </li>
               ))}
             </ul>
           ) : null}
+          {/* Coup de pouce */}
+          {cdp ? (
+            <div className="mt-1.5 rounded bg-purple-100 px-2 py-1 text-[10px] text-purple-900">
+              <div className="flex items-center gap-1 font-semibold">
+                <Sparkles className="h-3 w-3" />
+                {cdp.name}
+                {cdp.factor ? (
+                  <span className="ml-1 rounded-full bg-purple-700 px-1.5 py-0 text-[9px] font-bold text-white">
+                    ×{cdp.factor}
+                  </span>
+                ) : null}
+                <span
+                  className={cn(
+                    "ml-auto rounded-full px-1.5 py-0 text-[9px] font-bold",
+                    cdp.status === "Eligible" ||
+                      String(cdp.status) === "Applicable"
+                      ? "bg-emerald-600 text-white"
+                      : "bg-amber-500 text-white",
+                  )}
+                >
+                  {cdp.status}
+                </span>
+              </div>
+              {evaluation.standardKwhCumac != null &&
+              evaluation.kwhCumac != null &&
+              evaluation.kwhCumac > evaluation.standardKwhCumac ? (
+                <p className="mt-0.5 font-mono text-[9px] opacity-80">
+                  Standard : {formatKwh(evaluation.standardKwhCumac)} →
+                  bonifié : {formatKwh(evaluation.kwhCumac)} kWh cumac
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-0.5">
+        <div className="flex shrink-0 flex-col items-end gap-1">
           {evaluation.kwhCumac != null ? (
             <>
               <span className="text-sm font-black tabular-nums text-emerald-900">
@@ -340,11 +458,240 @@ function SheetRow({ result }: { result: FullEvaluateResult }) {
             </>
           ) : null}
           <StatusBadge status={evaluation.status} />
+          {!isEligible || evaluation.missing.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setEditing(!editing)}
+              className="flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-200"
+            >
+              <Pencil className="h-2.5 w-2.5" />
+              {editing ? "Fermer" : "Compléter"}
+            </button>
+          ) : null}
         </div>
+      </div>
+
+      {/* Mini formulaire dynamique */}
+      {editing ? (
+        <ActionEditor
+          code={sheet.code}
+          missing={evaluation.missing}
+          currentAction={currentAction}
+          onUpdate={onUpdateAction}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Mini formulaire dynamique : pour chaque champ identifié dans les `missing`
+ * strings, on génère un input adapté. Heuristique simple basée sur les
+ * patterns du simulateur source.
+ */
+function ActionEditor({
+  code,
+  missing,
+  currentAction,
+  onUpdate,
+}: {
+  code: string;
+  missing: string[];
+  currentAction: Action;
+  onUpdate: (key: string, value: unknown) => void;
+}) {
+  // Inputs détectés depuis les missing
+  const inputs = inferInputsFromMissing(code, missing);
+
+  if (inputs.length === 0) {
+    return (
+      <div className="mt-2 rounded bg-amber-100/60 p-2 text-[10px] text-amber-900">
+        Cette fiche nécessite des paramètres spécifiques que le simulateur
+        rapide ne couvre pas. Pour un calcul complet, utilise la page
+        /simulateur-cee dédiée (à venir).
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-md bg-amber-100/60 p-2">
+      <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
+        Compléter pour calculer
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {inputs.map((input) => (
+          <div key={input.key} className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-semibold text-amber-900">
+              {input.label}
+            </label>
+            {input.kind === "select" ? (
+              <select
+                value={String(currentAction[input.key] ?? "")}
+                onChange={(e) => onUpdate(input.key, e.target.value)}
+                className="h-7 rounded-md border border-amber-300 bg-white px-2 text-[11px]"
+              >
+                <option value="">Choisir…</option>
+                {(input.options ?? []).map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                value={String(currentAction[input.key] ?? "")}
+                onChange={(e) => onUpdate(input.key, e.target.value)}
+                type={input.kind === "number" ? "number" : "text"}
+                className="h-7 text-[11px]"
+              />
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
+
+// === Heuristique missing → input ========================================
+
+interface InputSpec {
+  key: string;
+  label: string;
+  kind: "text" | "number" | "select";
+  options?: string[];
+}
+
+function inferInputsFromMissing(code: string, missing: string[]): InputSpec[] {
+  const specs: InputSpec[] = [];
+  const seen = new Set<string>();
+  const add = (spec: InputSpec) => {
+    if (seen.has(spec.key)) return;
+    seen.add(spec.key);
+    specs.push(spec);
+  };
+
+  for (const m of missing) {
+    const lc = m.toLowerCase();
+    if (lc.includes("surface") && lc.includes("logement")) {
+      add({ key: "buildingSurface", label: "Surface (m²)", kind: "number" });
+    } else if (lc.includes("surface") && lc.includes("chauffee")) {
+      add({ key: "heatedSurface", label: "Surface chauffée (m²)", kind: "number" });
+    } else if (lc.includes("saut") && lc.includes("classe")) {
+      if (lc.includes("premiere etape")) {
+        add({
+          key: "firstStageClassJumpCount",
+          label: "Sauts de classe 1ère étape",
+          kind: "select",
+          options: ["1", "2", "3"],
+        });
+      } else {
+        add({
+          key: "classJumpCount",
+          label: "Nombre de sauts de classe",
+          kind: "select",
+          options: ["2", "3", "4 ou plus"],
+        });
+      }
+    } else if (lc.includes("annee de construction")) {
+      add({
+        key: "constructionYear",
+        label: "Année construction",
+        kind: "number",
+      });
+    } else if (lc.includes("code postal")) {
+      add({ key: "postalCode", label: "Code postal", kind: "text" });
+    } else if (lc.includes("type d'habitation") || lc.includes("type d habitation")) {
+      add({
+        key: "housingType",
+        label: "Type d'habitation",
+        kind: "select",
+        options: [
+          "Maison individuelle",
+          "Appartement",
+          "Batiment d'habitation collectif en monopropriete",
+          "Batiment d'habitation collectif en copropriete",
+        ],
+      });
+    } else if (lc.includes("residence principale") || lc.includes("residence secondaire")) {
+      add({
+        key: "coupDePoucePrimaryResidence",
+        label: "Résidence principale ?",
+        kind: "select",
+        options: ["Oui", "Non"],
+      });
+    } else if (lc.includes("equipement remplace") || lc.includes("équipement remplacé")) {
+      add({
+        key: "coupDePouceReplacedEquipment",
+        label: "Équipement remplacé",
+        kind: "select",
+        options: [
+          "Chaudiere au charbon",
+          "Chaudiere au fioul",
+          "Chaudiere au gaz",
+          "Autre",
+        ],
+      });
+    } else if (lc.includes("reseau de chaleur")) {
+      add({
+        key: "coupDePouceHeatNetworkImpossible",
+        label: "Raccordement RdC impossible ?",
+        kind: "select",
+        options: ["Oui", "Non"],
+      });
+    } else if (lc.includes("nombre de logements") || lc.includes("apartmentcount")) {
+      add({ key: "apartmentCount", label: "Nombre de logements", kind: "number" });
+    } else if (lc.includes("revenus")) {
+      add({
+        key: "incomeBracket",
+        label: "Catégorie de revenus",
+        kind: "select",
+        options: ["veryModest", "modest", "intermediate", "high"],
+      });
+    } else if (lc.includes("anah") || lc.includes("maprimerenov")) {
+      add({
+        key: "anahRenovationRoute",
+        label: "Parcours Anah/MPR Ampleur ?",
+        kind: "select",
+        options: ["Oui", "Non"],
+      });
+    } else if (
+      lc.includes("usage") &&
+      (lc.includes("pac") || lc.includes("chauffage") || code.includes("TH-163"))
+    ) {
+      add({
+        key: "usage",
+        label: "Usage de la PAC",
+        kind: "select",
+        options: ["Chauffage", "Chauffage + ECS", "ECS uniquement"],
+      });
+    } else if (lc.includes("puissance")) {
+      add({
+        key: "powerBand",
+        label: "Bande de puissance",
+        kind: "select",
+        options: ["Inferieure ou egale a 400 kW", "Superieure a 400 kW"],
+      });
+    } else if (lc.includes("secteur")) {
+      add({
+        key: "sector",
+        label: "Secteur d'activité",
+        kind: "select",
+        options: [
+          "Bureaux",
+          "Enseignement",
+          "Commerces",
+          "Hotellerie / Restauration",
+          "Sante",
+          "Autres secteurs",
+        ],
+      });
+    }
+  }
+
+  return specs;
+}
+
+// === Utils communs ======================================================
 
 function StatusPill({
   count,
@@ -375,17 +722,9 @@ function StatusBadge({ status }: { status: string }) {
       ? "bg-emerald-600 text-white"
       : status === "Eligibilite a confirmer"
         ? "bg-amber-500 text-white"
-        : status === "Non eligible"
-          ? "bg-red-600 text-white"
-          : "bg-slate-400 text-white";
+        : "bg-slate-400 text-white";
   const label =
-    status === "Eligibilite a confirmer"
-      ? "À confirmer"
-      : status === "Potentiellement eligible"
-        ? "Potentiel"
-        : status === "Non eligible"
-          ? "Non éligible"
-          : status;
+    status === "Eligibilite a confirmer" ? "À compléter" : status;
   return (
     <span
       className={cn(
@@ -446,5 +785,3 @@ function mapPeriodToYear(period: string | null): number | null {
       return null;
   }
 }
-
-void Banknote;
