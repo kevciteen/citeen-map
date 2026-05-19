@@ -409,18 +409,12 @@ export function MaisonDetailSheet({
               />
             </Section>
 
-            {/* SIMULATEUR CEE QUICK */}
+            {/* POSTES DE TRAVAUX CEE ÉLIGIBLES */}
             <Section
               icon={<Banknote className="h-4 w-4 text-emerald-700" />}
-              title="Estimation CEE — rénovation d'ampleur"
+              title="Travaux CEE éligibles"
             >
-              <CeeQuickEstimate
-                typeBatiment={typeBatiment}
-                classeDpe={maison.classe}
-                surface={maison.surface}
-                postalCode={maison.address.postcode}
-                constructionYear={maison.annee_construction}
-              />
+              <CeeQuickEstimate typeBatiment={typeBatiment} maison={maison} />
             </Section>
 
             {/* TRANSACTIONS DVF */}
