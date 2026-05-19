@@ -400,6 +400,118 @@ export function quickEstimate(input: QuickEstimateInput): QuickEstimateResult {
   };
 }
 
+// === API "Full Estimate" — évalue toutes les fiches du catalogue ========
+
+import { SHEETS, type SheetDefinition } from "./sheets";
+import { STATUS_PRIORITY } from "./config";
+import type { BuildingType } from "./types";
+
+export interface FullEvaluateOptions {
+  /** Limite l'évaluation aux fiches de ce type. Si non précisé, on infère depuis project.buildingType. */
+  buildingTypes?: BuildingType[];
+  /** Actions par code de fiche. Si non fourni, on évalue en mode "discovery" (action = {}). */
+  actions?: Record<string, Action>;
+  /** Liste de codes à activer (enabled=true). Par défaut : tous activés. */
+  enabledCodes?: string[];
+}
+
+export interface FullEvaluateResult {
+  evaluation: Evaluation;
+  sheet: SheetDefinition;
+}
+
+/**
+ * Évalue toutes les fiches CEE pertinentes pour un projet donné.
+ *
+ * Mode "discovery" (par défaut) : action vide pour chaque fiche → on identifie
+ * lesquelles sont applicables (status Eligible ou À confirmer) et lesquelles
+ * sont bloquantes (Non éligible).
+ *
+ * Mode "estimation" : on peuple `actions[code]` avec des hypothèses raisonnables
+ * (ex: surface, classJumpCount) → le moteur calcule kWh cumac + €.
+ *
+ * Résultats triés par pertinence (Eligible → Confirm → Potential → Ineligible)
+ * puis par kWh cumac décroissant.
+ */
+export function evaluateAllSheets(
+  project: Project,
+  options: FullEvaluateOptions = {},
+): FullEvaluateResult[] {
+  const buildingTypes =
+    options.buildingTypes ??
+    (project.buildingType ? [project.buildingType as BuildingType] : ["Habitation", "Tertiaire"]);
+
+  const allCodes = Object.keys(SHEETS).filter((code) => {
+    const sheetTypes = SHEETS[code].buildingTypes;
+    return sheetTypes.some((t) => buildingTypes.includes(t));
+  });
+
+  const enabledSet = options.enabledCodes
+    ? new Set(options.enabledCodes)
+    : null;
+
+  const results: FullEvaluateResult[] = [];
+  for (const code of allCodes) {
+    const sheet = SHEETS[code];
+    const action = options.actions?.[code] ?? {};
+    const enabled = enabledSet ? enabledSet.has(code) : true;
+    try {
+      const evaluation = sheet.evaluate(project, action, enabled);
+      results.push({ evaluation, sheet });
+    } catch {
+      // Une fiche qui crashe sur un input incomplet → on l'ignore silencieusement
+      // (l'utilisateur n'a probablement pas rempli les bons champs pour celle-ci)
+    }
+  }
+
+  // Tri : Eligible → Confirm → Potential → Ineligible, puis kWh cumac décroissant
+  results.sort((a, b) => {
+    const pa = STATUS_PRIORITY[a.evaluation.status] ?? 99;
+    const pb = STATUS_PRIORITY[b.evaluation.status] ?? 99;
+    if (pa !== pb) return pa - pb;
+    const ka = a.evaluation.kwhCumac ?? 0;
+    const kb = b.evaluation.kwhCumac ?? 0;
+    return kb - ka;
+  });
+
+  return results;
+}
+
+/**
+ * Helper : agrège les résultats par famille (Bouquet / Enveloppe / Thermique…).
+ * Utile pour l'UI qui affiche par catégorie.
+ */
+export function groupByFamily(
+  results: FullEvaluateResult[],
+): Record<string, FullEvaluateResult[]> {
+  const out: Record<string, FullEvaluateResult[]> = {};
+  for (const r of results) {
+    const family = r.sheet.family;
+    if (!out[family]) out[family] = [];
+    out[family].push(r);
+  }
+  return out;
+}
+
+/**
+ * Totalise les montants estimés (kWh cumac + €) pour un sous-ensemble de
+ * résultats. Utile pour afficher "Total potentiel" sur la fiche copro.
+ */
+export function sumEstimates(results: FullEvaluateResult[]): {
+  kwhCumac: number;
+  euroAmount: number;
+} {
+  let kwhCumac = 0;
+  let euroAmount = 0;
+  for (const r of results) {
+    if (r.evaluation.kwhCumac != null) kwhCumac += r.evaluation.kwhCumac;
+    if (r.evaluation.euroAmount != null) euroAmount += r.evaluation.euroAmount;
+  }
+  return { kwhCumac, euroAmount };
+}
+
 // Re-export utilitaires pour les consommateurs (UI, autres modules)
 export { STATUS } from "./config";
+export { SHEETS } from "./sheets";
+export type { SheetDefinition } from "./sheets";
 export type { Evaluation, Project, Action, CoupDePouceInfo } from "./types";
