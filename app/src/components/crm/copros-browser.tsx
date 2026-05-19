@@ -18,6 +18,7 @@ import {
   Square,
   TrendingUp,
   FileSpreadsheet,
+  RefreshCw,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -121,6 +122,7 @@ export function CoprosBrowser({ totalInDb }: { totalInDb: number }) {
   const [bulkAddBusy, setBulkAddBusy] = useState(false);
   const [autoCompute, setAutoCompute] = useState(true);
   const [computing, setComputing] = useState<{ done: number; total: number } | null>(null);
+  const [recomputing, setRecomputing] = useState<{ done: number; total: number } | null>(null);
   const seq = useRef(0);
   const computeSeq = useRef(0);
 
@@ -242,6 +244,44 @@ export function CoprosBrowser({ totalInDb }: { totalInDb: number }) {
   const toggleAll = () => {
     if (selected.size === rows.length && rows.length > 0) setSelected(new Set());
     else setSelected(new Set(rows.map((r) => r.id)));
+  };
+
+  /* Force le recalcul DPE des copros visibles (utile après une mise à jour
+     de la logique de détection collectif/individuel — on doit invalider le
+     cache des copros déjà calculées sous l'ancienne règle). */
+  const forceRecompute = async () => {
+    if (rows.length === 0) return;
+    if (
+      !confirm(
+        `Recalculer le DPE de ${rows.length} copropriété${rows.length > 1 ? "s" : ""} visible${rows.length > 1 ? "s" : ""} ? Les valeurs précédentes seront écrasées.`,
+      )
+    ) {
+      return;
+    }
+    const ids = rows.map((r) => r.id);
+    const CHUNK = 25;
+    setRecomputing({ done: 0, total: ids.length });
+    let done = 0;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const r = await fetch("/api/copros/dpe-batch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          coproIds: slice,
+          forceRefresh: true,
+          concurrency: 10,
+        }),
+      }).catch(() => null);
+      if (r?.ok) {
+        done += slice.length;
+        setRecomputing({ done, total: ids.length });
+      }
+    }
+    setRecomputing(null);
+    // Refetch pour rafraîchir les pills DPE et les filtres
+    await refetchList();
+    toast.success(`${done}/${ids.length} copros recalculées`);
   };
   const toggleOne = (id: number) => {
     const next = new Set(selected);
@@ -535,7 +575,13 @@ export function CoprosBrowser({ totalInDb }: { totalInDb: number }) {
           {computing ? (
             <span className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Calcul DPE en cours : {computing.done}/{computing.total}
+              Calcul DPE : {computing.done}/{computing.total}
+            </span>
+          ) : null}
+          {recomputing ? (
+            <span className="flex items-center gap-1.5 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-900">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Recalcul forcé : {recomputing.done}/{recomputing.total}
             </span>
           ) : null}
           <label className="flex cursor-pointer items-center gap-1.5 text-[10px]">
@@ -547,6 +593,20 @@ export function CoprosBrowser({ totalInDb }: { totalInDb: number }) {
             />
             Pré‑calculer DPE des résultats
           </label>
+          <button
+            type="button"
+            onClick={forceRecompute}
+            disabled={
+              rows.length === 0 ||
+              recomputing !== null ||
+              computing !== null
+            }
+            className="inline-flex items-center gap-1 rounded-lg border border-orange-300 bg-orange-50 px-2 py-1 text-[10px] font-semibold text-orange-900 hover:bg-orange-100 disabled:opacity-50"
+            title="Force le recalcul du DPE pour les copropriétés visibles (écrase le cache)"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Forcer recalcul ({rows.length})
+          </button>
           <a
             href={`/api/export/copros-by-filter.xlsx?${qs}`}
             className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-emerald-700"
