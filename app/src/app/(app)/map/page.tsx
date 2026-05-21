@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useRef, useState } from "react";
 import { Topbar } from "@/components/layout/topbar";
-import { MapView, type CoproPoint, type MaisonPoint, type MapBounds } from "@/components/map/map-view";
+import { MapView, type CoproPoint, type MaisonPoint, type TertiairePoint, type MapBounds } from "@/components/map/map-view";
 import {
   FiltersBar,
   DEFAULT_FILTERS,
@@ -9,6 +9,7 @@ import {
 } from "@/components/map/filters-bar";
 import { AddressSearch } from "@/components/map/address-search";
 import { CoproPanel } from "@/components/map/copro-panel";
+import { TertiairePanel } from "@/components/map/tertiaire-panel";
 import { MaisonDetailSheet } from "@/components/crm/maison-detail-sheet";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -73,11 +74,14 @@ export default function MapPage() {
   const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [points, setPoints] = useState<CoproPoint[]>([]);
   const [maisons, setMaisons] = useState<MaisonPoint[]>([]);
+  const [tertiary, setTertiary] = useState<TertiairePoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [count, setCount] = useState(0);
   const [maisonsCount, setMaisonsCount] = useState(0);
+  const [tertiaryCount, setTertiaryCount] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedTertiaireId, setSelectedTertiaireId] = useState<number | null>(null);
   const [selectedMaison, setSelectedMaison] = useState<MaisonFull | null>(null);
   const [maisonSheetKey, setMaisonSheetKey] = useState(0);
   const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
@@ -93,6 +97,7 @@ export default function MapPage() {
       const wantsCopros = f.mode === "copros" || f.mode === "both";
       const wantsMaisons = f.mode === "maisons" || f.mode === "both";
       const wantsAppts = f.mode === "appartements" || f.mode === "both";
+      const wantsTertiaire = f.mode === "tertiaire" || f.mode === "both";
 
       const tasks: Array<Promise<unknown>> = [];
       let aggregatedItems: MaisonFull[] = [];
@@ -177,6 +182,34 @@ export default function MapPage() {
         setMaisonsCount(0);
       }
 
+      // Tertiaire — utilise les filtres avancés (secteur, surface, propriétaire)
+      if (wantsTertiaire) {
+        const sp = new URLSearchParams();
+        sp.set("limit", "3000");
+        if (f.q) sp.set("q", f.q);
+        if (f.cp) sp.set("cp", f.cp);
+        else if (f.dept) sp.set("dept", f.dept);
+        if (f.commune) sp.set("commune", f.commune);
+        if (f.secteurTertiaire) sp.set("secteur", f.secteurTertiaire);
+        if (f.dpeClasses.length) sp.set("dpe", f.dpeClasses.join(","));
+        if (f.surfaceMin != null) sp.set("surfaceMin", String(f.surfaceMin));
+        if (f.surfaceMax != null) sp.set("surfaceMax", String(f.surfaceMax));
+        if (f.proprietaire) sp.set("proprietaire", f.proprietaire);
+        tasks.push(
+          fetch(`/api/tertiaire/list?${sp}`)
+            .then((r) => (r.ok ? r.json() : { items: [], count: 0 }))
+            .then((j) => {
+              if (seq !== fetchSeq.current) return;
+              const items = (j.items ?? []) as TertiairePoint[];
+              setTertiary(items.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon)));
+              setTertiaryCount(j.count ?? items.length);
+            }),
+        );
+      } else {
+        setTertiary([]);
+        setTertiaryCount(0);
+      }
+
       await Promise.all(tasks);
       if (seq !== fetchSeq.current) return;
       if (wantsMaisons || wantsAppts) {
@@ -225,11 +258,13 @@ export default function MapPage() {
         <MapView
           points={points}
           maisons={maisons}
+          tertiary={tertiary}
           flyTo={flyTo}
           selectedId={selectedId}
           onBoundsChange={setBounds}
-          onSelectCopro={(id) => setSelectedId(id)}
+          onSelectCopro={(id) => { setSelectedTertiaireId(null); setSelectedId(id); }}
           onSelectMaison={handleSelectMaison}
+          onSelectTertiaire={(id) => { setSelectedId(null); setSelectedTertiaireId(id); }}
         />
 
         <FiltersBar
@@ -240,11 +275,13 @@ export default function MapPage() {
             setFilters(DEFAULT_FILTERS);
             setPoints([]);
             setMaisons([]);
+            setTertiary([]);
             setCount(0);
             setMaisonsCount(0);
+            setTertiaryCount(0);
             setHasSearched(false);
           }}
-          resultCount={count + maisonsCount}
+          resultCount={count + maisonsCount + tertiaryCount}
         />
 
         <div className="absolute right-4 top-4 z-10 w-[420px] max-w-[calc(100vw-2rem)]">
@@ -265,6 +302,15 @@ export default function MapPage() {
             coproId={selectedId}
             onClose={() => setSelectedId(null)}
           />
+        ) : null}
+
+        {selectedTertiaireId != null ? (
+          <div className="absolute right-4 top-4 z-20 h-[calc(100%-2rem)] w-[420px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
+            <TertiairePanel
+              buildingId={selectedTertiaireId}
+              onClose={() => setSelectedTertiaireId(null)}
+            />
+          </div>
         ) : null}
 
         {/* Sheet maison déclenchée par clic sur un marker maison */}
@@ -293,6 +339,7 @@ export default function MapPage() {
             ) : (
               <span>
                 <span className="font-bold text-primary">{count}</span> copros ·{" "}
+                <span className="font-bold text-orange-600">{tertiaryCount}</span> tertiaires ·{" "}
                 <span className="font-bold text-emerald-600">{maisonsCount}</span> maisons
               </span>
             )}

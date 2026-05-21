@@ -1,25 +1,39 @@
-import { Suspense } from "react";
 import { Topbar } from "@/components/layout/topbar";
-import { CoprosBrowser } from "@/components/crm/copros-browser";
+import { CoprosSyndicsTabs } from "@/components/crm/copros-syndics-tabs";
 import { db } from "@/lib/db/client";
 
 export const dynamic = "force-dynamic";
 
-export default async function CoprosPage() {
-  const row = await db.get<{ c: number }>("SELECT COUNT(*) AS c FROM copros");
-  const total = row?.c ?? 0;
+export default async function CoprosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const [coprosRow, syndicsRow, params] = await Promise.all([
+    db.get<{ c: number }>("SELECT COUNT(*) AS c FROM copros"),
+    db.get<{ c: number }>(
+      `SELECT COUNT(DISTINCT TRIM(syndic)) AS c
+       FROM copros
+       WHERE syndic IS NOT NULL AND LOWER(syndic) != 'non connu'`,
+    ),
+    searchParams,
+  ]);
+  const totalCopros = coprosRow?.c ?? 0;
+  const totalSyndics = syndicsRow?.c ?? 0;
+  const initialTab = params.tab === "syndics" ? "syndics" : "copros";
 
   return (
     <div className="flex h-full flex-col">
       <Topbar
         title="Copropriétés"
-        subtitle={`${total.toLocaleString("fr-FR")} immeubles en base — registre national IDF`}
+        subtitle={`${totalCopros.toLocaleString("fr-FR")} immeubles · ${totalSyndics.toLocaleString("fr-FR")} syndics — registre national IDF`}
       />
       <div className="flex-1 overflow-hidden bg-secondary/30">
-        {/* Suspense requis pour useSearchParams côté client (Next 16) */}
-        <Suspense fallback={null}>
-          <CoprosBrowser totalInDb={total} />
-        </Suspense>
+        <CoprosSyndicsTabs
+          totalCopros={totalCopros}
+          totalSyndics={totalSyndics}
+          initialTab={initialTab}
+        />
       </div>
     </div>
   );

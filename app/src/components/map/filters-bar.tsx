@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import { Building2, Building, Home, Search, Sliders, X } from "lucide-react";
+import { Building2, Building, Briefcase, Home, Search, Sliders, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { cn } from "@/lib/utils";
 
-export type MapMode = "copros" | "maisons" | "appartements" | "both";
+export type MapMode = "copros" | "maisons" | "appartements" | "tertiaire" | "both";
 
 const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G", "NC"] as const;
 const DEPARTEMENTS = ["75", "77", "78", "91", "92", "93", "94", "95"];
@@ -17,6 +17,14 @@ const PERIODES = [
   "1994_2000",
   "2001_2010",
   "APRES_2011",
+];
+const SECTEURS_TERTIAIRE = [
+  "Bureaux",
+  "Commerces",
+  "Hotellerie / Restauration",
+  "Sante",
+  "Enseignement",
+  "Autres secteurs",
 ];
 
 export type MapFilters = {
@@ -29,6 +37,11 @@ export type MapFilters = {
   minLots: number | null;
   periode: string;
   mode: MapMode;
+  // Filtres tertiaire avancés
+  secteurTertiaire: string;
+  surfaceMin: number | null;
+  surfaceMax: number | null;
+  proprietaire: string;
 };
 
 export const DEFAULT_FILTERS: MapFilters = {
@@ -41,6 +54,10 @@ export const DEFAULT_FILTERS: MapFilters = {
   minLots: null,
   periode: "",
   mode: "copros",
+  secteurTertiaire: "",
+  surfaceMin: null,
+  surfaceMax: null,
+  proprietaire: "",
 };
 
 export function FiltersBar({
@@ -64,8 +81,12 @@ export function FiltersBar({
     onChange({ ...value, dpeClasses: next });
   };
 
+  const showsCopros = value.mode === "copros" || value.mode === "both";
+  const showsTertiaire = value.mode === "tertiaire" || value.mode === "both";
+  const showsMaisons = value.mode === "maisons" || value.mode === "appartements" || value.mode === "both";
+
   return (
-    <div className="absolute left-4 top-4 z-10 w-[360px] max-w-[calc(100vw-2rem)]">
+    <div className="absolute left-4 top-4 z-10 w-[380px] max-w-[calc(100vw-2rem)]">
       <div className="premium-card overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
@@ -82,24 +103,30 @@ export function FiltersBar({
 
         {open ? (
           <div className="space-y-3 p-4">
-            {/* Mode toggle : copros / maisons / appartements / tous */}
-            <div className="grid grid-cols-4 gap-1 rounded-lg border border-border bg-background p-0.5">
+            {/* Mode toggle : 5 types */}
+            <div className="grid grid-cols-5 gap-1 rounded-lg border border-border bg-background p-0.5">
               <ModeBtn
                 active={value.mode === "copros"}
                 onClick={() => onChange({ ...value, mode: "copros" })}
-                icon={<Building2 className="h-3.5 w-3.5" />}
+                icon={<Building2 className="h-3 w-3" />}
                 label="Copros"
+              />
+              <ModeBtn
+                active={value.mode === "tertiaire"}
+                onClick={() => onChange({ ...value, mode: "tertiaire" })}
+                icon={<Briefcase className="h-3 w-3" />}
+                label="Tertiaire"
               />
               <ModeBtn
                 active={value.mode === "maisons"}
                 onClick={() => onChange({ ...value, mode: "maisons" })}
-                icon={<Home className="h-3.5 w-3.5" />}
+                icon={<Home className="h-3 w-3" />}
                 label="Maisons"
               />
               <ModeBtn
                 active={value.mode === "appartements"}
                 onClick={() => onChange({ ...value, mode: "appartements" })}
-                icon={<Building className="h-3.5 w-3.5" />}
+                icon={<Building className="h-3 w-3" />}
                 label="Apparts"
               />
               <ModeBtn
@@ -117,7 +144,9 @@ export function FiltersBar({
                 onChange={(e) => onChange({ ...value, q: e.target.value })}
                 onKeyDown={(e) => e.key === "Enter" && onSubmit()}
                 placeholder={
-                  value.mode === "maisons"
+                  value.mode === "tertiaire"
+                    ? "Adresse, nom bâtiment, n° DPE…"
+                    : value.mode === "maisons"
                     ? "Adresse, n° DPE…"
                     : "Adresse, nom de copro, n° immatriculation…"
                 }
@@ -139,15 +168,13 @@ export function FiltersBar({
               >
                 <option value="">Département</option>
                 {DEPARTEMENTS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
+                  <option key={d} value={d}>{d}</option>
                 ))}
               </select>
             </div>
 
-            {/* Commune : utile pour maisons (résolu via BAN/INSEE) */}
-            {value.mode !== "copros" ? (
+            {/* Commune : utile pour maisons + tertiaire */}
+            {(showsMaisons || showsTertiaire) ? (
               <Input
                 value={value.commune}
                 onChange={(e) => onChange({ ...value, commune: e.target.value })}
@@ -156,7 +183,7 @@ export function FiltersBar({
             ) : null}
 
             {/* Syndic : copros uniquement */}
-            {value.mode !== "maisons" ? (
+            {showsCopros && !showsTertiaire ? (
               <Input
                 value={value.syndic}
                 onChange={(e) => onChange({ ...value, syndic: e.target.value })}
@@ -164,9 +191,24 @@ export function FiltersBar({
               />
             ) : null}
 
+            {/* Secteur d'activité tertiaire */}
+            {showsTertiaire ? (
+              <select
+                value={value.secteurTertiaire}
+                onChange={(e) => onChange({ ...value, secteurTertiaire: e.target.value })}
+                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Tous secteurs d'activité</option>
+                {SECTEURS_TERTIAIRE.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            ) : null}
+
+            {/* Classe DPE multi-select */}
             <div>
               <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Classe DPE finale
+                Classe DPE
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {DPE_CLASSES.map((c) => {
@@ -177,9 +219,7 @@ export function FiltersBar({
                       onClick={() => toggleClass(c)}
                       className={cn(
                         "cursor-pointer transition-transform",
-                        active
-                          ? "scale-110 ring-2 ring-foreground/70 ring-offset-1"
-                          : "opacity-50 hover:opacity-100",
+                        active ? "scale-110 ring-2 ring-foreground/70 ring-offset-1" : "opacity-50 hover:opacity-100",
                       )}
                       aria-pressed={active}
                     >
@@ -190,18 +230,48 @@ export function FiltersBar({
               </div>
             </div>
 
+            {/* Surface tertiaire min/max */}
+            {showsTertiaire ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  value={value.surfaceMin ?? ""}
+                  onChange={(e) =>
+                    onChange({ ...value, surfaceMin: e.target.value === "" ? null : Number(e.target.value) })
+                  }
+                  placeholder="Surface min m²"
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  value={value.surfaceMax ?? ""}
+                  onChange={(e) =>
+                    onChange({ ...value, surfaceMax: e.target.value === "" ? null : Number(e.target.value) })
+                  }
+                  placeholder="Surface max m²"
+                />
+              </div>
+            ) : null}
+
+            {/* Propriétaire / occupant (recherche texte) */}
+            {(showsTertiaire || showsCopros) ? (
+              <Input
+                value={value.proprietaire}
+                onChange={(e) => onChange({ ...value, proprietaire: e.target.value })}
+                placeholder={showsTertiaire ? "Occupant / société (nom)" : "Syndic / propriétaire (nom)"}
+              />
+            ) : null}
+
             {/* Lots min + Période : copros uniquement */}
-            {value.mode !== "maisons" ? (
+            {showsCopros && !showsTertiaire ? (
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   type="number"
                   min={0}
                   value={value.minLots ?? ""}
                   onChange={(e) =>
-                    onChange({
-                      ...value,
-                      minLots: e.target.value === "" ? null : Number(e.target.value),
-                    })
+                    onChange({ ...value, minLots: e.target.value === "" ? null : Number(e.target.value) })
                   }
                   placeholder="Lots min."
                 />
@@ -220,12 +290,16 @@ export function FiltersBar({
               </div>
             ) : null}
 
-            {/* Mini-aide selon mode pour clarifier ce qu'on cherche */}
-            {value.mode !== "copros" ? (
+            {/* Mini-aide */}
+            {showsMaisons && !showsTertiaire ? (
               <p className="rounded-md bg-blue-50 px-2 py-1.5 text-[11px] text-blue-900">
-                💡 Pour les maisons, indique un <strong>code postal</strong> ou
-                une <strong>commune</strong> (les maisons ne se cherchent pas par
-                bbox carte — il faut un périmètre).
+                💡 Pour les maisons, indique un <strong>code postal</strong> ou une <strong>commune</strong>
+              </p>
+            ) : null}
+
+            {showsTertiaire ? (
+              <p className="rounded-md bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">
+                💡 80k bâtiments tertiaires IDF — combine code postal/dept + DPE + secteur pour cibler.
               </p>
             ) : null}
 
@@ -260,7 +334,7 @@ function ModeBtn({
     <button
       onClick={onClick}
       className={cn(
-        "flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold transition-colors",
+        "flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1.5 text-[10px] font-semibold transition-colors",
         active
           ? "bg-primary text-primary-foreground shadow-sm"
           : "text-muted-foreground hover:bg-secondary hover:text-foreground",

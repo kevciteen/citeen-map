@@ -4,9 +4,13 @@
  * Filtres (querystring) :
  *   - bbox : "minLon,minLat,maxLon,maxLat" (carte)
  *   - secteur : Bureaux | Commerces | "Hotellerie / Restauration" | Sante | Enseignement | "Autres secteurs"
- *   - dpe : A..G ou ABC ou DEF ou FG (multi-classes)
+ *   - dpe : "A,B,C" ou "FG" (multi-classes)
  *   - dept : code département (75, 77, 78, 91, 92, 93, 94, 95)
  *   - cp : code postal
+ *   - commune : nom commune (LIKE %x%)
+ *   - q : recherche texte sur label/adresse (LIKE %x%)
+ *   - surfaceMin / surfaceMax : surface en m²
+ *   - proprietaire : recherche texte sur dénomination occupant (LIKE %x%)
  *   - limit : max résultats (défaut 1000, max 5000)
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -25,9 +29,14 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const bbox = sp.get("bbox")?.split(",").map(Number);
   const secteur = sp.get("secteur");
-  const dpe = sp.get("dpe"); // ex: "FG" ou "A" ou "ABC"
+  const dpe = sp.get("dpe");
   const dept = sp.get("dept");
   const cp = sp.get("cp");
+  const commune = sp.get("commune");
+  const q = sp.get("q");
+  const surfaceMin = sp.get("surfaceMin");
+  const surfaceMax = sp.get("surfaceMax");
+  const proprietaire = sp.get("proprietaire");
   const limit = Math.min(Number(sp.get("limit") ?? "1000"), 5000);
 
   // Garde-fou : exclut toujours les bâtiments sans coordonnées (sinon MapLibre crash)
@@ -35,10 +44,8 @@ export async function GET(req: NextRequest) {
   const args: InValue[] = [];
 
   if (bbox && bbox.length === 4 && bbox.every(Number.isFinite)) {
-    where.push(`b.lon BETWEEN ? AND ?`);
-    args.push(bbox[0], bbox[2]);
-    where.push(`b.lat BETWEEN ? AND ?`);
-    args.push(bbox[1], bbox[3]);
+    where.push(`b.lon BETWEEN ? AND ? AND b.lat BETWEEN ? AND ?`);
+    args.push(bbox[0], bbox[2], bbox[1], bbox[3]);
   }
   if (secteur) {
     where.push(`b.secteur = ?`);
@@ -52,13 +59,36 @@ export async function GET(req: NextRequest) {
     where.push(`b.code_postal = ?`);
     args.push(cp);
   }
+  if (commune) {
+    where.push(`LOWER(b.commune) LIKE ?`);
+    args.push(`%${commune.toLowerCase()}%`);
+  }
+  if (q) {
+    where.push(`(LOWER(b.label) LIKE ? OR LOWER(b.adresse) LIKE ?)`);
+    args.push(`%${q.toLowerCase()}%`, `%${q.toLowerCase()}%`);
+  }
+  if (surfaceMin && Number.isFinite(Number(surfaceMin))) {
+    where.push(`b.surface_m2 >= ?`);
+    args.push(Number(surfaceMin));
+  }
+  if (surfaceMax && Number.isFinite(Number(surfaceMax))) {
+    where.push(`b.surface_m2 <= ?`);
+    args.push(Number(surfaceMax));
+  }
   if (dpe && dpe.length > 0) {
-    const classes = dpe.toUpperCase().split("").filter((c) => "ABCDEFG".includes(c));
+    const classes = dpe.toUpperCase().split(/[,\s]+/).filter((c) => "ABCDEFG".includes(c));
     if (classes.length > 0) {
       const placeholders = classes.map(() => "?").join(",");
       where.push(`d.etiquette_dpe IN (${placeholders})`);
       args.push(...classes);
     }
+  }
+  if (proprietaire) {
+    where.push(`EXISTS (
+      SELECT 1 FROM tertiary_occupants o
+      WHERE o.building_id = b.id AND LOWER(o.denomination) LIKE ?
+    )`);
+    args.push(`%${proprietaire.toLowerCase()}%`);
   }
 
   const sql = `

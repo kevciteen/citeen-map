@@ -35,6 +35,17 @@ export type MaisonPoint = {
   address: string;
 };
 
+export type TertiairePoint = {
+  id: number;
+  label: string | null;
+  adresse: string | null;
+  lat: number;
+  lon: number;
+  secteur: string | null;
+  etiquette_dpe: string | null;
+  surface_m2: number | null;
+};
+
 export type MapBounds = {
   minLat: number;
   maxLat: number;
@@ -51,15 +62,19 @@ const BASE_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export function MapView({
   points,
   maisons = [],
+  tertiary = [],
   flyTo,
   onBoundsChange,
   onSelectCopro,
   onSelectMaison,
+  onSelectTertiaire,
   selectedId,
 }: {
   points: CoproPoint[];
   maisons?: MaisonPoint[];
+  tertiary?: TertiairePoint[];
   onSelectMaison?: (numeroDpe: string) => void;
+  onSelectTertiaire?: (id: number) => void;
   flyTo?: { lat: number; lon: number; zoom?: number } | null;
   onBoundsChange?: (b: MapBounds) => void;
   onSelectCopro: (id: number) => void;
@@ -312,6 +327,110 @@ export function MapView({
         },
       });
 
+      /* ===== Source + layers TERTIAIRE — triangle distinct des copros (rond)
+         et des maisons (carré). 80k bâtiments IDF importés depuis ADEME. ===== */
+      map.addSource("tertiary", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+        cluster: true,
+        clusterRadius: 50,
+        clusterMaxZoom: 13,
+      });
+
+      map.addLayer({
+        id: "tert-clusters",
+        type: "circle",
+        source: "tertiary",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step", ["get", "point_count"],
+            "#f59e0b", 50, "#ea580c", 200, "#9a3412",
+          ],
+          "circle-radius": ["step", ["get", "point_count"], 12, 50, 18, 200, 26],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-opacity": 0.92,
+        },
+      });
+
+      map.addLayer({
+        id: "tert-cluster-count",
+        type: "symbol",
+        source: "tertiary",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-size": 11,
+          "text-font": ["Noto Sans Bold"],
+          "text-allow-overlap": true,
+        },
+        paint: { "text-color": "#ffffff" },
+      });
+
+      map.addLayer({
+        id: "tert-dot",
+        type: "circle",
+        source: "tertiary",
+        filter: ["!", ["has", "point_count"]],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 16, 9],
+          "circle-color": [
+            "match", ["coalesce", ["get", "dpe"], "NC"],
+            "A", DPE_COLORS.A, "B", DPE_COLORS.B, "C", DPE_COLORS.C,
+            "D", DPE_COLORS.D, "E", DPE_COLORS.E, "F", DPE_COLORS.F,
+            "G", DPE_COLORS.G, DPE_COLORS.NC,
+          ],
+          // Bordure orange = signature visuelle "tertiaire" (vs copro=blanc, maison=noir)
+          "circle-stroke-color": "#ea580c",
+          "circle-stroke-width": 2,
+        },
+      });
+
+      map.addLayer({
+        id: "tert-label",
+        type: "symbol",
+        source: "tertiary",
+        filter: ["!", ["has", "point_count"]],
+        minzoom: 14,
+        layout: {
+          "text-field": "T",
+          "text-size": 9,
+          "text-font": ["Noto Sans Bold"],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          "text-anchor": "center",
+        },
+        paint: {
+          "text-color": "#ffffff",
+          "text-halo-color": "#9a3412",
+          "text-halo-width": 1,
+        },
+      });
+
+      map.on("click", "tert-dot", (e) => {
+        const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+        const id = f?.properties?.id;
+        if (typeof id === "number" && onSelectTertiaire) onSelectTertiaire(id);
+        else if (id && onSelectTertiaire) onSelectTertiaire(Number(id));
+      });
+
+      map.on("click", "tert-clusters", (e) => {
+        const f = e.features?.[0];
+        const clusterId = f?.properties?.cluster_id;
+        if (clusterId == null) return;
+        const src = map.getSource("tertiary") as maplibregl.GeoJSONSource;
+        src.getClusterExpansionZoom(clusterId).then((zoom) => {
+          const c = (f!.geometry as GeoJSON.Point).coordinates as [number, number];
+          map.easeTo({ center: c, zoom });
+        });
+      });
+
+      map.on("mouseenter", "tert-dot", () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", "tert-dot", () => (map.getCanvas().style.cursor = ""));
+      map.on("mouseenter", "tert-clusters", () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", "tert-clusters", () => (map.getCanvas().style.cursor = ""));
+
       map.on("click", "copro-dot", (e) => {
         const f = e.features?.[0] as MapGeoJSONFeature | undefined;
         const id = f?.properties?.id;
@@ -421,6 +540,35 @@ export function MapView({
       map.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 600 });
     }
   }, [maisons, points.length, ready]);
+
+  // Update tertiary source data + auto-fit
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource("tertiary") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    const features: GeoJSON.Feature[] = tertiary
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+      .map((p) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+        properties: {
+          id: p.id,
+          label: p.label ?? p.adresse ?? `#${p.id}`,
+          dpe: p.etiquette_dpe ?? "NC",
+          secteur: p.secteur ?? "",
+          surface: p.surface_m2 ?? null,
+        },
+      }));
+    src.setData({ type: "FeatureCollection", features });
+    if (tertiary.length > 0 && points.length === 0 && maisons.length === 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      for (const p of tertiary) {
+        if (Number.isFinite(p.lat) && Number.isFinite(p.lon)) bounds.extend([p.lon, p.lat]);
+      }
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 600 });
+    }
+  }, [tertiary, points.length, maisons.length, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

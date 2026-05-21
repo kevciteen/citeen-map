@@ -12,7 +12,6 @@ import {
   Settings,
   FileDown,
   PlusCircle,
-  Users,
   Shield,
   LogOut,
   KeyRound,
@@ -29,7 +28,6 @@ const items = [
   { href: "/maisons", label: "Maisons individuelles", icon: Home },
   { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
-  { href: "/syndics", label: "Syndics", icon: Users },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];
 
