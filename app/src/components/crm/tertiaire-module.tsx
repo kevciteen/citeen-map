@@ -381,37 +381,134 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
               right={<span className="text-[10px] uppercase tracking-wider text-muted-foreground">{result.diagnostics.occupantsCount} actives</span>}
             >
               {result.occupants.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Aucune société active.</p>
+                <div className="space-y-1 rounded border border-border/50 bg-secondary/20 p-3">
+                  <p className="text-sm font-medium">Aucune société SIRENE à cette adresse exacte.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Causes possibles : adresse résidentielle, récente, ou nom de rue historique
+                    différent. Relance la recherche (Ctrl+F5) si tu viens d'un état caché.
+                  </p>
+                </div>
               ) : (
-                <ul className="space-y-2">
-                  {result.occupants.slice(0, 12).map((o) => (
-                    <li key={o.siret} className="rounded-lg border border-border/50 bg-secondary/30 p-3 text-sm">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-semibold">{o.denomination ?? "(sans dénomination)"}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">
-                            SIRET {o.siret}{o.estSiege ? " · siège" : ""}{o.trancheEffectif ? ` · ${o.trancheEffectif}` : ""}
-                          </p>
-                          {o.nafLabel ? <p className="truncate text-[11px] text-muted-foreground">{o.nafCode} · {o.nafLabel}</p> : null}
-                        </div>
-                        {o.siren ? (
-                          <a href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary" title="Voir sur Annuaire Entreprises">
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                  {result.occupants.length > 12 ? <p className="text-xs text-muted-foreground">+ {result.occupants.length - 12} autres…</p> : null}
-                </ul>
+                <SortedOccupantsList occupants={result.occupants} />
               )}
               <p className="mt-3 border-t border-border/50 pt-2 text-[11px] italic text-muted-foreground">
-                Propriétaire foncier : non disponible (DV3F sous convention).
+                Propriétaire foncier : DV3F (Cerema sous convention publique).
               </p>
             </ResultCard>
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+// === Tri par effectif + détection domiciliations ===
+type OccupantSearch = {
+  siret: string;
+  siren: string;
+  denomination: string | null;
+  nafCode: string | null;
+  nafLabel: string | null;
+  trancheEffectif: string | null;
+  estSiege: boolean;
+  estActif: boolean;
+};
+
+const EFFECTIF_ORDER: Record<string, number> = {
+  "53": 14, "52": 13, "51": 12, "42": 11, "41": 10, "32": 9, "31": 8,
+  "22": 7, "21": 6, "12": 5, "11": 4, "03": 3, "02": 2, "01": 1, "00": 0,
+};
+function effRank(c: string | null): number {
+  if (!c) return -1;
+  return EFFECTIF_ORDER[c] ?? -1;
+}
+function effLabel(c: string | null): string {
+  if (!c) return "Non renseigné";
+  const m: Record<string, string> = {
+    "00": "0 salarié", "01": "1-2", "02": "3-5", "03": "6-9",
+    "11": "10-19", "12": "20-49", "21": "50-99", "22": "100-199",
+    "31": "200-249", "32": "250-499", "41": "500-999", "42": "1000-1999",
+    "51": "2000-4999", "52": "5000-9999", "53": "10000+", "NN": "Non renseigné",
+  };
+  return m[c] ?? c;
+}
+function isDomic(o: OccupantSearch): boolean {
+  return !o.trancheEffectif || o.trancheEffectif === "NN" || o.trancheEffectif === "00";
+}
+
+function SortedOccupantsList({ occupants }: { occupants: OccupantSearch[] }) {
+  const [hideDomic, setHideDomic] = useState(false);
+  const sorted = [...occupants].sort((a, b) => {
+    const r = effRank(b.trancheEffectif) - effRank(a.trancheEffectif);
+    if (r !== 0) return r;
+    const s = (b.estSiege ? 1 : 0) - (a.estSiege ? 1 : 0);
+    if (s !== 0) return s;
+    return (a.denomination ?? "").localeCompare(b.denomination ?? "");
+  });
+  const domicCount = sorted.filter(isDomic).length;
+  const realCount = sorted.length - domicCount;
+  const filtered = hideDomic ? sorted.filter((o) => !isDomic(o)) : sorted;
+
+  return (
+    <div>
+      {domicCount > 0 ? (
+        <div className="mb-2 flex items-center justify-between rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs">
+          <span className="text-amber-900">
+            <strong>{realCount}</strong> employeur(s) · <strong>{domicCount}</strong> domiciliation(s) probable(s)
+          </span>
+          <button
+            onClick={() => setHideDomic((v) => !v)}
+            className="rounded bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+          >
+            {hideDomic ? "Tout afficher" : "Cacher domic."}
+          </button>
+        </div>
+      ) : null}
+      <ul className="space-y-2">
+        {filtered.slice(0, 30).map((o) => {
+          const domic = isDomic(o);
+          return (
+            <li
+              key={o.siret}
+              className={`rounded-lg border p-3 text-sm ${
+                domic ? "border-border/40 bg-secondary/10 opacity-70" : "border-border/50 bg-secondary/30"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold">{o.denomination ?? "(sans dénomination)"}</p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    SIRET {o.siret}
+                    {o.estSiege ? " · siège" : ""}
+                    {" · "}
+                    <span className={domic ? "" : "font-semibold text-emerald-700"}>
+                      {effLabel(o.trancheEffectif)}
+                    </span>
+                    {domic ? <span className="text-amber-700"> · domic. probable</span> : null}
+                  </p>
+                  {o.nafLabel ? (
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {o.nafCode} · {o.nafLabel}
+                    </p>
+                  ) : null}
+                </div>
+                {o.siren ? (
+                  <a
+                    href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-primary"
+                    title="Voir sur Annuaire Entreprises"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+        {filtered.length > 30 ? <p className="text-xs text-muted-foreground">+ {filtered.length - 30} autres…</p> : null}
+      </ul>
     </div>
   );
 }
