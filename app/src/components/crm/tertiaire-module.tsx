@@ -14,14 +14,15 @@ import {
   Zap,
   ExternalLink,
   CheckCircle2,
+  Database,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { TertiaireMap, type TertiairePoint, type MapBounds } from "@/components/map/tertiaire-map";
 import { TertiairePanel } from "@/components/map/tertiaire-panel";
 import { CeeTertiairePostes } from "@/components/crm/cee-tertiaire-postes";
+import { AddressAutocomplete } from "@/components/crm/address-autocomplete";
 
 type LookupResult = {
   query: string;
@@ -35,12 +36,12 @@ type LookupResult = {
   } | null;
   dpeTertiaire: {
     numero_dpe?: string;
-    etiquette_dpe?: string;
-    etiquette_ges?: string;
-    conso_kwhep_m2_an?: number | string;
-    emission_ges_kgco2_m2_an?: number | string;
+    classe_consommation_energie?: string;
+    classe_estimation_ges?: string;
+    consommation_energie?: number | string;
+    estimation_ges?: number | string;
     surface_utile?: number | string;
-    type_usage_principal?: string;
+    secteur_activite?: string;
     annee_construction?: number | string;
     date_etablissement_dpe?: string;
   } | null;
@@ -54,7 +55,18 @@ type LookupResult = {
     estSiege: boolean;
     estActif: boolean;
   }>;
-  diagnostics: { sourceDpe: "bdnb" | "ademe" | "none"; bdnbCandidates: number; dpeCandidates: number; occupantsCount: number };
+  buildingId: number | null;
+  nearbyBuildings: Array<{
+    id: number;
+    label: string | null;
+    adresse: string | null;
+    secteur: string | null;
+    lat: number;
+    lon: number;
+    distanceM: number;
+    etiquette_dpe: string | null;
+  }>;
+  diagnostics: { sourceDpe: "db" | "bdnb" | "ademe" | "none"; bdnbCandidates: number; dpeCandidates: number; occupantsCount: number; dbBuildings: number };
 };
 
 type Tab = "search" | "map";
@@ -168,13 +180,18 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
     if (!result) return;
     setCreatingProspect(true);
     try {
-      const saveRes = await fetch("/api/tertiaire/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result),
-      });
-      if (!saveRes.ok) throw new Error(`save ${saveRes.status}`);
-      const { buildingId } = await saveRes.json();
+      // Si le bâtiment est déjà en DB (trouvé par lookup), on évite le save.
+      let buildingId = result.buildingId;
+      if (!buildingId) {
+        const saveRes = await fetch("/api/tertiaire/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(result),
+        });
+        if (!saveRes.ok) throw new Error(`save ${saveRes.status}`);
+        const saveJson = await saveRes.json() as { buildingId: number };
+        buildingId = saveJson.buildingId;
+      }
       setSavedBuildingId(buildingId);
 
       const prospectRes = await fetch(`/api/tertiaire/${buildingId}/create-prospect`, { method: "POST" });
@@ -193,7 +210,7 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
     const surface = result.bdnb?.surfaceUtileTertiaire ?? (Number(result.dpeTertiaire?.surface_utile ?? 0) || null);
     const year = Number(result.dpeTertiaire?.annee_construction ?? 0) || null;
     onSimulerCee({
-      sector: mapTypeToSecteur(result.bdnb?.typeUsage ?? result.dpeTertiaire?.type_usage_principal),
+      sector: mapTypeToSecteur(result.bdnb?.typeUsage ?? result.dpeTertiaire?.secteur_activite),
       postalCode: result.geocode?.postcode ?? null,
       surface,
       year,
@@ -209,14 +226,25 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recherche d'un bâtiment tertiaire</h2>
         </div>
         <form onSubmit={onSubmit} className="flex flex-col gap-2 sm:flex-row">
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Adresse complète" className="flex-1" disabled={loading} />
+          <AddressAutocomplete
+            value={query}
+            onChange={setQuery}
+            onSelect={(s) => {
+              setQuery(s.label);
+              // déclenche aussitôt la recherche sur sélection
+              setTimeout(() => onSubmit(), 0);
+            }}
+            onSubmit={() => onSubmit()}
+            placeholder="Tape une adresse (suggestions automatiques BAN)"
+            disabled={loading}
+          />
           <Button type="submit" disabled={loading} className="gap-2">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             Rechercher
           </Button>
         </form>
         <p className="mt-2 text-xs text-muted-foreground">
-          BAN → Cadastre IGN → BDNB → DPE tertiaire ADEME → Recherche d'entreprises (occupants)
+          BAN → Cadastre IGN → DB locale (80k bâtiments IDF) → DPE ADEME live → Recherche d'entreprises (occupants)
         </p>
       </div>
 
@@ -234,18 +262,51 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
             <span className="text-xs text-muted-foreground">Actions :</span>
             <Button size="sm" onClick={saveAndCreateProspect} disabled={creatingProspect} className="gap-1.5">
               {creatingProspect ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-              Sauvegarder + créer prospect
+              {result.buildingId ? "Créer prospect" : "Sauvegarder + créer prospect"}
             </Button>
             <Button size="sm" variant="secondary" onClick={simulerCee} className="gap-1.5">
               <Calculator className="h-3.5 w-3.5" />
               Simuler CEE
             </Button>
+            {result.buildingId ? (
+              <Badge variant="secondary" className="gap-1.5 text-[10px]">
+                <Database className="h-3 w-3" /> En base #{result.buildingId}
+              </Badge>
+            ) : null}
             {savedBuildingId ? (
               <Badge className="ml-auto gap-1.5 bg-emerald-100 text-emerald-900">
-                <CheckCircle2 className="h-3 w-3" /> Bâtiment #{savedBuildingId} sauvegardé
+                <CheckCircle2 className="h-3 w-3" /> Sauvegardé #{savedBuildingId}
               </Badge>
             ) : null}
           </div>
+
+          {/* Bâtiments proches en DB (si l'adresse exacte n'a pas de DPE) */}
+          {result.nearbyBuildings.length > 0 && result.diagnostics.sourceDpe !== "db" ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-900">
+                <Database className="h-4 w-4" />
+                {result.nearbyBuildings.length} bâtiment(s) tertiaire(s) en base à proximité
+              </div>
+              <p className="mb-3 text-xs text-amber-800">
+                L'adresse exacte n'a pas de DPE tertiaire référencé mais ces bâtiments DB sont à moins de 150m :
+              </p>
+              <ul className="space-y-1">
+                {result.nearbyBuildings.slice(0, 8).map((b) => (
+                  <li key={b.id} className="flex items-center justify-between gap-2 rounded border border-amber-200 bg-white p-2 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">
+                        {b.etiquette_dpe ? <DpeBadge value={b.etiquette_dpe} /> : null} {b.label ?? b.adresse}
+                      </p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        {b.secteur ?? "—"} · à {Math.round(b.distanceM)}m
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0 text-[10px]">#{b.id}</Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {/* 4 cartes */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -299,19 +360,19 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
                   <Row label="N° DPE" value={result.dpeTertiaire.numero_dpe ?? "—"} />
                   <div className="flex items-center gap-2 py-1">
                     <span className="w-44 text-xs text-muted-foreground">Étiquettes</span>
-                    <DpeBadge value={String(result.dpeTertiaire.etiquette_dpe ?? "")} />
+                    <DpeBadge value={String(result.dpeTertiaire.classe_consommation_energie ?? "")} />
                     <span className="text-xs text-muted-foreground">DPE</span>
-                    <DpeBadge value={String(result.dpeTertiaire.etiquette_ges ?? "")} />
+                    <DpeBadge value={String(result.dpeTertiaire.classe_estimation_ges ?? "")} />
                     <span className="text-xs text-muted-foreground">GES</span>
                   </div>
-                  <Row label="Conso EP" value={result.dpeTertiaire.conso_kwhep_m2_an ? `${Number(result.dpeTertiaire.conso_kwhep_m2_an).toLocaleString("fr-FR")} kWhEP/m²/an` : "—"} />
-                  <Row label="Émissions GES" value={result.dpeTertiaire.emission_ges_kgco2_m2_an ? `${Number(result.dpeTertiaire.emission_ges_kgco2_m2_an).toLocaleString("fr-FR")} kgCO₂/m²/an` : "—"} />
+                  <Row label="Conso EP" value={result.dpeTertiaire.consommation_energie ? `${Number(result.dpeTertiaire.consommation_energie).toLocaleString("fr-FR")} kWhEP/m²/an` : "—"} />
+                  <Row label="Émissions GES" value={result.dpeTertiaire.estimation_ges ? `${Number(result.dpeTertiaire.estimation_ges).toLocaleString("fr-FR")} kgCO₂/m²/an` : "—"} />
                   <Row label="Surface utile" value={result.dpeTertiaire.surface_utile ? `${Number(result.dpeTertiaire.surface_utile).toLocaleString("fr-FR")} m²` : "—"} />
-                  <Row label="Usage" value={result.dpeTertiaire.type_usage_principal ?? "—"} />
+                  <Row label="Usage" value={result.dpeTertiaire.secteur_activite ?? "—"} />
                   <Row label="Année construction" value={result.dpeTertiaire.annee_construction ?? "—"} />
                   <Row label="Date DPE" value={result.dpeTertiaire.date_etablissement_dpe ?? "—"} />
                 </dl>
-              ) : <p className="text-sm text-muted-foreground">Aucun DPE tertiaire trouvé.</p>}
+              ) : <p className="text-sm text-muted-foreground">Aucun DPE tertiaire trouvé dans un rayon de 80m. {result.diagnostics.dbBuildings > 0 ? `${result.diagnostics.dbBuildings} bâtiment(s) DB proche(s) — voir liste ci-dessous.` : ""}</p>}
             </ResultCard>
 
             <ResultCard
@@ -379,32 +440,48 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 /* =============================== MAP VIEW =============================== */
 
+// Bbox initial par défaut centré sur Paris pour amorcer la carte avant le
+// premier `moveend` de MapLibre.
+const DEFAULT_BBOX: MapBounds = {
+  minLon: 2.20, maxLon: 2.50,
+  minLat: 48.80, maxLat: 48.95,
+  zoom: 11,
+};
+
+const ZOOM_MIN = 9;
+
 function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | null; postalCode?: string | null; surface?: number | null; year?: number | null; label?: string }) => void }) {
   const [points, setPoints] = useState<TertiairePoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filterSecteur, setFilterSecteur] = useState<string>("");
   const [filterDpe, setFilterDpe] = useState<string>("");
-  const boundsRef = useRef<MapBounds | null>(null);
+  // Pré-initialisé pour que le 1er fetch fonctionne même si MapLibre tarde
+  const boundsRef = useRef<MapBounds>(DEFAULT_BBOX);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchPoints = useCallback(async () => {
-    if (!boundsRef.current) return;
-    if (boundsRef.current.zoom < 10) { setPoints([]); return; }
+    const b = boundsRef.current;
+    if (b.zoom < ZOOM_MIN) { setPoints([]); return; }
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
-      const b = boundsRef.current;
       params.set("bbox", `${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`);
       if (filterSecteur) params.set("secteur", filterSecteur);
       if (filterDpe) params.set("dpe", filterDpe);
       params.set("limit", "3000");
       const res = await fetch(`/api/tertiaire/list?${params.toString()}`);
-      if (!res.ok) throw new Error(`list ${res.status}`);
-      const json = await res.json() as { items: TertiairePoint[] };
-      setPoints(json.items);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = (json as { error?: string }).error ?? `HTTP ${res.status}`;
+        setError(msg);
+        return;
+      }
+      setPoints((json as { items: TertiairePoint[] }).items ?? []);
     } catch (err) {
-      toast.error((err as Error).message);
+      setError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -416,7 +493,8 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
     reloadTimer.current = setTimeout(fetchPoints, 350);
   }, [fetchPoints]);
 
-  // Re-fetch quand filtres changent
+  // Fetch initial au montage (utilise le DEFAULT_BBOX Paris) +
+  // re-fetch quand filtres changent.
   useEffect(() => { fetchPoints(); }, [filterSecteur, filterDpe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -445,6 +523,15 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
             {loading ? "Chargement…" : `${points.length} bâtiments`}
           </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => fetchPoints()}
+            className="h-6 text-[10px]"
+            title="Recharger la zone visible"
+          >
+            ⟳
+          </Button>
         </div>
 
         <TertiaireMap
@@ -454,15 +541,21 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
           selectedId={selectedId}
         />
 
-        {points.length === 0 && !loading && boundsRef.current && boundsRef.current.zoom >= 10 ? (
-          <div className="absolute left-1/2 top-20 z-10 -translate-x-1/2 rounded-lg border border-border bg-card/95 p-3 text-xs text-muted-foreground shadow-md">
-            Aucun bâtiment importé dans cette zone. Lance le script <code className="rounded bg-secondary px-1">npx tsx scripts/import-dpe-tertiaire-idf.ts</code> ou utilise la recherche par adresse.
+        {error ? (
+          <div className="absolute left-1/2 top-20 z-10 -translate-x-1/2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900 shadow-md">
+            Erreur API /api/tertiaire/list : {error}
           </div>
         ) : null}
 
-        {boundsRef.current && boundsRef.current.zoom < 10 ? (
+        {!error && points.length === 0 && !loading && boundsRef.current.zoom >= ZOOM_MIN ? (
           <div className="absolute left-1/2 top-20 z-10 -translate-x-1/2 rounded-lg border border-border bg-card/95 p-3 text-xs text-muted-foreground shadow-md">
-            Zoome (zoom ≥ 10) pour afficher les bâtiments tertiaires.
+            Aucun bâtiment dans cette zone (vérifie la DB Turso, ou déplace/zoome).
+          </div>
+        ) : null}
+
+        {boundsRef.current.zoom < ZOOM_MIN ? (
+          <div className="absolute left-1/2 top-20 z-10 -translate-x-1/2 rounded-lg border border-border bg-card/95 p-3 text-xs text-muted-foreground shadow-md">
+            Zoome davantage (zoom ≥ {ZOOM_MIN}) pour afficher les bâtiments.
           </div>
         ) : null}
       </div>
