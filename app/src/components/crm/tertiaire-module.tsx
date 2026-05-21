@@ -450,16 +450,33 @@ const DEFAULT_BBOX: MapBounds = {
 
 const ZOOM_MIN = 9;
 
+type Stats = {
+  totalBuildings: number;
+  withCoords: number;
+  parisBboxCount: number;
+  db: { tursoUrlSet: boolean; tursoUrlPrefix: string | null; authTokenSet: boolean };
+};
+
 function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | null; postalCode?: string | null; surface?: number | null; year?: number | null; label?: string }) => void }) {
   const [points, setPoints] = useState<TertiairePoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filterSecteur, setFilterSecteur] = useState<string>("");
   const [filterDpe, setFilterDpe] = useState<string>("");
   // Pré-initialisé pour que le 1er fetch fonctionne même si MapLibre tarde
   const boundsRef = useRef<MapBounds>(DEFAULT_BBOX);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Diagnostic au mount : compte global en DB pour comprendre si la prod
+  // voit bien les bâtiments importés.
+  useEffect(() => {
+    fetch("/api/tertiaire/stats")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setStats(j))
+      .catch(() => {});
+  }, []);
 
   const fetchPoints = useCallback(async () => {
     const b = boundsRef.current;
@@ -523,6 +540,18 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
             {loading ? "Chargement…" : `${points.length} bâtiments`}
           </span>
+          {stats ? (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                stats.totalBuildings > 0
+                  ? "bg-emerald-100 text-emerald-900"
+                  : "bg-red-100 text-red-900"
+              }`}
+              title={`Turso URL ${stats.db.tursoUrlSet ? "set" : "MISSING"}${stats.db.tursoUrlPrefix ? ` (${stats.db.tursoUrlPrefix}…)` : ""}`}
+            >
+              DB: {stats.totalBuildings.toLocaleString("fr-FR")}
+            </span>
+          ) : null}
           <Button
             size="sm"
             variant="ghost"
