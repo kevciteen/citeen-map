@@ -180,11 +180,18 @@ function normalizeAddr(s: string): string {
 }
 
 /**
- * Extrait le numéro de rue (avec bis/ter) d'une chaîne d'adresse.
+ * Extrait le numéro de rue (avec bis/ter) — celui qui PRÉCÈDE directement
+ * un type de voie (rue/avenue/chemin/…). Robuste aux compléments d'adresse
+ * en début (ex: "CANAL DE L'OURCQ 39 CHEMIN LATERAL" → "39").
  */
 function extractStreetNumber(s: string): string | null {
-  const m = normalizeAddr(s).match(/^(\d+)\s*(bis|ter|quater)?/);
-  return m ? `${m[1]}${m[2] ? " " + m[2] : ""}` : null;
+  const norm = normalizeAddr(s);
+  // Cherche "<NUM> <VOIE>" n'importe où dans l'adresse
+  const m = norm.match(new RegExp(`(\\d+)\\s*(bis|ter|quater)?\\s+${VOIE_REGEX.source}`));
+  if (m) return `${m[1]}${m[2] ? " " + m[2] : ""}`;
+  // Fallback : numéro initial sans voie associée
+  const m2 = norm.match(/^(\d+)\s*(bis|ter|quater)?/);
+  return m2 ? `${m2[1]}${m2[2] ? " " + m2[2] : ""}` : null;
 }
 
 const VOIE_REGEX = /\b(rue|avenue|av|boulevard|bd|place|pl|allee|allees|impasse|imp|chemin|ch|route|rte|cours|cour|square|sq|quai|passage|villa|cite|hameau|esplanade|parvis|rond[\s-]?point)\s+/;
@@ -193,51 +200,66 @@ const VOIE_REGEX = /\b(rue|avenue|av|boulevard|bd|place|pl|allee|allees|impasse|
  * Extrait le nom de rue (après "rue/av/bd…" et avant le code postal).
  * Ex: "3 rue meyerbeer 75009 paris" → "meyerbeer"
  *     "parking meyerbeer 3 rue de la chaussee d antin 75009" → "de la chaussee d antin"
+ *
+ * Si l'adresse contient un alias "ex/ancien <type> <nom>", retourne aussi
+ * le nom alternatif (utile pour les rues récemment renommées).
  */
-function extractStreetName(s: string): string | null {
+function extractStreetNames(s: string): { primary: string | null; alternatives: string[] } {
   const norm = normalizeAddr(s);
-  // Enlève le code postal + commune en fin
   const sansCp = norm.replace(/\s+\d{5}\s+.+$/, "").trim();
-  // Cherche le premier "rue/av/bd ... " et capture le reste de la chaîne (nom de la voie)
-  const match = sansCp.match(new RegExp(VOIE_REGEX.source + "(.+)$"));
-  if (!match) return null;
-  // Le nom de rue = ce qui vient après "rue " (jusqu'à fin), nettoyé
-  return match[2].trim();
+  // 1. Nom principal après le premier "rue/av/bd…"
+  const main = sansCp.match(new RegExp(VOIE_REGEX.source + "(.+?)(?:\\s+ex\\s+|\\s+ancien\\s+|$)"));
+  const primary = main ? main[2].trim() : null;
+  // 2. Aliases : tout "ex|ancien" suivi d'un type de voie
+  const alternatives: string[] = [];
+  const altRegex = new RegExp(`\\b(?:ex|ancien)\\s+${VOIE_REGEX.source}(.+?)(?:\\s+ex\\s+|\\s+ancien\\s+|$)`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = altRegex.exec(sansCp)) !== null) {
+    if (m[2]) alternatives.push(m[2].trim());
+  }
+  return { primary, alternatives };
+}
+
+function extractStreetName(s: string): string | null {
+  return extractStreetNames(s).primary;
+}
+
+const ADDR_STOP_WORDS = new Set(["de", "du", "la", "le", "les", "des", "d", "l", "et", "a", "au", "aux", "en"]);
+
+function tokensOf(s: string): string[] {
+  return s.split(" ").filter((t) => t.length >= 2 && !ADDR_STOP_WORDS.has(t));
+}
+
+function streetTokensMatch(queryStreet: string, sireneStreet: string): boolean {
+  const qt = tokensOf(queryStreet);
+  const st = tokensOf(sireneStreet);
+  if (qt.length === 0 || st.length === 0) return false;
+  const sSet = new Set(st);
+  return qt.every((t) => sSet.has(t));
 }
 
 /**
  * Vérifie qu'une adresse SIRENE matche la query strictement.
- * Numéro doit matcher (si présent dans query).
- * Nom de rue (après "rue/av/bd…") doit matcher EXACTEMENT (mêmes tokens
- * significatifs, dans l'ordre).
+ * Numéro doit matcher (si présent côté query).
+ * Nom de rue (après "rue/av/bd…") doit matcher EXACTEMENT, en essayant
+ * aussi les noms alternatifs (ex: "ex chemin latéral") détectés dans la query.
  */
 function matchesAddressStrict(sireneAddr: string | null, queryAddr: string): boolean {
   if (!sireneAddr) return false;
   const queryNum = extractStreetNumber(queryAddr);
-  const queryStreet = extractStreetName(queryAddr);
+  const { primary, alternatives } = extractStreetNames(queryAddr);
   const sireneNum = extractStreetNumber(sireneAddr);
   const sireneStreet = extractStreetName(sireneAddr);
 
   if (queryNum && sireneNum && queryNum !== sireneNum) return false;
-  if (!queryStreet || !sireneStreet) return false;
+  if (!sireneStreet) return false;
 
-  // Tokens significatifs (mots de la rue, hors "de/du/la/le/les/des/d/l")
-  const stopWords = new Set(["de", "du", "la", "le", "les", "des", "d", "l", "et", "a", "au", "aux", "en"]);
-  const tokens = (s: string) => s.split(" ").filter((t) => t.length >= 2 && !stopWords.has(t));
-  const qt = tokens(queryStreet);
-  const st = tokens(sireneStreet);
-  if (qt.length === 0 || st.length === 0) return false;
-
-  // Pour matcher : TOUS les tokens significatifs de query doivent être dans
-  // sirene ET vice-versa (égalité des ensembles de tokens significatifs).
-  const qSet = new Set(qt);
-  const sSet = new Set(st);
-  if (qSet.size !== sSet.size) {
-    // Si tailles différentes, l'un est sous-ensemble de l'autre → on accepte si
-    // tous les tokens de query sont dans sirene (typo plus large dans SIRENE OK).
-    return qt.every((t) => sSet.has(t));
+  // Match si la rue SIRENE correspond au nom principal OU à un nom alternatif
+  if (primary && streetTokensMatch(primary, sireneStreet)) return true;
+  for (const alt of alternatives) {
+    if (streetTokensMatch(alt, sireneStreet)) return true;
   }
-  return qt.every((t) => sSet.has(t));
+  return false;
 }
 
 /**
@@ -337,6 +359,25 @@ export async function searchEntreprisesAtAddress(opts: {
     if (sansNumero && sansNumero !== q && sansNumero.length >= 4) {
       const url = new URL(RE_BASE);
       url.searchParams.set("q", sansNumero);
+      url.searchParams.set("page", "1");
+      url.searchParams.set("per_page", String(perPage));
+      url.searchParams.set("etat_administratif", "A");
+      if (opts.codeInsee) url.searchParams.set("code_commune", opts.codeInsee);
+      if (opts.codePostal) url.searchParams.set("code_postal", opts.codePostal);
+      const json = await safeFetch(url);
+      if (json) merge(mapResultsToOccupants(json));
+    }
+  }
+
+  // Pass 3 bis : noms alternatifs détectés ("ex chemin latéral", "ancien…")
+  // — pour les rues récemment renommées dont SIRENE garde l'ancien nom.
+  if (q) {
+    const { alternatives } = extractStreetNames(q);
+    const queryNum = extractStreetNumber(q);
+    for (const altName of alternatives) {
+      const altQuery = queryNum ? `${queryNum} ${altName}` : altName;
+      const url = new URL(RE_BASE);
+      url.searchParams.set("q", altQuery);
       url.searchParams.set("page", "1");
       url.searchParams.set("per_page", String(perPage));
       url.searchParams.set("etat_administratif", "A");
