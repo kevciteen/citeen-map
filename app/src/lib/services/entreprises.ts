@@ -54,24 +54,30 @@ type RawDirigeant = {
   siren?: string;
 };
 
+type RawEtablissement = {
+  siret?: string;
+  activite_principale?: string;
+  libelle_activite_principale?: string;
+  tranche_effectif_salarie?: string;
+  adresse?: string;
+  est_siege?: boolean;
+  etat_administratif?: string;
+};
+
 type RawResult = {
   siren?: string;
+  // L'API renvoie `nom_complet` (sans le e final) — on accepte les deux par sécurité
+  nom_complet?: string;
   nom_complete?: string;
   nom_raison_sociale?: string;
+  sigle?: string;
   nombre_etablissements_ouverts?: number;
   activite_principale?: string;
   section_activite_principale?: string;
   tranche_effectif_salarie?: string;
   dirigeants?: RawDirigeant[];
-  matching_etablissements?: Array<{
-    siret?: string;
-    activite_principale?: string;
-    libelle_activite_principale?: string;
-    tranche_effectif_salarie?: string;
-    adresse?: string;
-    est_siege?: boolean;
-    etat_administratif?: string;
-  }>;
+  siege?: RawEtablissement;
+  matching_etablissements?: RawEtablissement[];
 };
 
 export type Dirigeant = {
@@ -92,25 +98,51 @@ function mapResultsToOccupants(json: RawResponse): EntrepriseAtAddress[] {
   const out: EntrepriseAtAddress[] = [];
   for (const r of json.results ?? []) {
     const siren = r.siren ?? "";
-    const denomination = r.nom_complete ?? r.nom_raison_sociale ?? null;
+    // L'API renvoie `nom_complet` (sans e) ; on garde aussi `nom_complete` au cas où
+    const denomination =
+      r.nom_complet ??
+      r.nom_complete ??
+      r.nom_raison_sociale ??
+      r.sigle ??
+      null;
     const naf = r.activite_principale ?? null;
     const trancheEffectif = r.tranche_effectif_salarie ?? null;
     const dirigeants = (r.dirigeants ?? []).map(mapDirigeant);
 
+    // Priorité : matching_etablissements (filtrés par recherche), fallback siege seul
     const etabs = r.matching_etablissements ?? [];
-    if (etabs.length === 0 && siren) {
-      out.push({
-        siret: siren + "00000",
-        siren,
-        denomination,
-        nafCode: naf,
-        nafLabel: null,
-        trancheEffectif,
-        adresseEnregistree: null,
-        estSiege: false,
-        estActif: true,
-        dirigeants,
-      });
+    if (etabs.length === 0) {
+      // Pas de matching → /near_point ne renvoie pas matching_etablissements,
+      // il faut prendre le siège.
+      const sg = r.siege;
+      if (sg?.siret) {
+        out.push({
+          siret: sg.siret,
+          siren,
+          denomination,
+          nafCode: sg.activite_principale ?? naf,
+          nafLabel: null,
+          trancheEffectif: sg.tranche_effectif_salarie ?? trancheEffectif,
+          adresseEnregistree: sg.adresse ?? null,
+          estSiege: Boolean(sg.est_siege),
+          estActif: (sg.etat_administratif ?? "A") === "A",
+          dirigeants,
+        });
+      } else if (siren) {
+        // Vraiment rien → on garde quand même la société (siret synthétique)
+        out.push({
+          siret: siren + "00000",
+          siren,
+          denomination,
+          nafCode: naf,
+          nafLabel: null,
+          trancheEffectif,
+          adresseEnregistree: null,
+          estSiege: false,
+          estActif: true,
+          dirigeants,
+        });
+      }
       continue;
     }
     for (const e of etabs) {
@@ -153,9 +185,13 @@ export async function searchEntreprisesAtAddress(opts: {
 }): Promise<EntrepriseAtAddress[]> {
   const q = opts.q?.trim();
   if (!q && !(opts.lat && opts.lon)) return [];
-  const limit = Math.min(opts.limit ?? 50, 100);
+  // L'API recherche-entreprises plafonne per_page à 25 — au-delà c'est HTTP 400.
+  // On limite à 25 par requête et on déduplique entre les passes pour atteindre
+  // un volume utile (généralement 25-60 sociétés différentes via les 4 passes).
+  const userLimit = Math.min(opts.limit ?? 25, 100);
+  const perPage = Math.min(userLimit, 25);
 
-  const key = `recherche-entreprises:${q}|${opts.codeInsee ?? ""}|${opts.codePostal ?? ""}|${opts.lat ?? ""}|${opts.lon ?? ""}|${limit}`;
+  const key = `recherche-entreprises:${q}|${opts.codeInsee ?? ""}|${opts.codePostal ?? ""}|${opts.lat ?? ""}|${opts.lon ?? ""}|${userLimit}`;
   const hit = cacheGet<EntrepriseAtAddress[]>(key);
   if (hit) return hit;
 
@@ -178,9 +214,17 @@ export async function searchEntreprisesAtAddress(opts: {
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        if (process.env.DEBUG_SIRENE) {
+          console.error(`[SIRENE] ${url.pathname} HTTP ${res.status} : ${await res.text().catch(() => "")}`);
+        }
+        return null;
+      }
       return (await res.json()) as RawResponse;
-    } catch {
+    } catch (err) {
+      if (process.env.DEBUG_SIRENE) {
+        console.error(`[SIRENE] ${url.pathname} exception : ${(err as Error).message}`);
+      }
       return null;
     }
   };
@@ -192,7 +236,7 @@ export async function searchEntreprisesAtAddress(opts: {
     url.searchParams.set("long", String(opts.lon));
     url.searchParams.set("radius", "0.1"); // 100m
     url.searchParams.set("page", "1");
-    url.searchParams.set("per_page", String(limit));
+    url.searchParams.set("per_page", String(perPage));
     url.searchParams.set("etat_administratif", "A");
     const json = await safeFetch(url);
     if (json) merge(mapResultsToOccupants(json));
@@ -203,7 +247,7 @@ export async function searchEntreprisesAtAddress(opts: {
     const url = new URL(RE_BASE);
     url.searchParams.set("q", q);
     url.searchParams.set("page", "1");
-    url.searchParams.set("per_page", String(limit));
+    url.searchParams.set("per_page", String(perPage));
     url.searchParams.set("etat_administratif", "A");
     if (opts.codeInsee) url.searchParams.set("code_commune", opts.codeInsee);
     if (opts.codePostal) url.searchParams.set("code_postal", opts.codePostal);
@@ -219,7 +263,7 @@ export async function searchEntreprisesAtAddress(opts: {
       const url = new URL(RE_BASE);
       url.searchParams.set("q", sansNumero);
       url.searchParams.set("page", "1");
-      url.searchParams.set("per_page", String(limit));
+      url.searchParams.set("per_page", String(perPage));
       url.searchParams.set("etat_administratif", "A");
       if (opts.codeInsee) url.searchParams.set("code_commune", opts.codeInsee);
       if (opts.codePostal) url.searchParams.set("code_postal", opts.codePostal);
@@ -236,7 +280,7 @@ export async function searchEntreprisesAtAddress(opts: {
     url.searchParams.set("long", String(opts.lon));
     url.searchParams.set("radius", "0.25"); // 250m
     url.searchParams.set("page", "1");
-    url.searchParams.set("per_page", String(limit));
+    url.searchParams.set("per_page", String(perPage));
     url.searchParams.set("etat_administratif", "A");
     const json = await safeFetch(url);
     if (json) merge(mapResultsToOccupants(json));
