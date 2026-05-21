@@ -91,10 +91,22 @@ export async function ensureTertiary(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_prospects_tertiary ON prospects(tertiary_building_id)`,
   );
 
-  // ALTER idempotent : colonne dirigeants_json (ajoutée après le déploiement initial)
+  // ALTER idempotent : colonnes ajoutées après le déploiement initial
   const occCols = await db.all<{ name: string }>(`PRAGMA table_info(tertiary_occupants)`);
-  if (!occCols.some((c) => c.name === "dirigeants_json")) {
-    await db.exec(`ALTER TABLE tertiary_occupants ADD COLUMN dirigeants_json TEXT`);
+  const colSet = new Set(occCols.map((c) => c.name));
+  const additions: Array<[string, string]> = [
+    ["dirigeants_json", "TEXT"],
+    ["phone", "TEXT"],
+    ["website", "TEXT"],
+    ["email", "TEXT"],
+    ["hours", "TEXT"],
+    ["contact_source", "TEXT"],
+    ["contact_fetched_at", "INTEGER"],
+  ];
+  for (const [name, type] of additions) {
+    if (!colSet.has(name)) {
+      await db.exec(`ALTER TABLE tertiary_occupants ADD COLUMN ${name} ${type}`);
+    }
   }
 
   ensured = true;

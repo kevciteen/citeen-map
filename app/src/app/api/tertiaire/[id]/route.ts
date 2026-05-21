@@ -55,6 +55,11 @@ type Occupant = {
   tranche_effectif: string | null;
   est_siege: number | null;
   dirigeants_json: string | null;
+  phone: string | null;
+  website: string | null;
+  email: string | null;
+  hours: string | null;
+  contact_source: string | null;
 };
 
 export async function GET(
@@ -88,7 +93,7 @@ export async function GET(
 
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
   let occupants = await db.all<Occupant>(
-    `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json
+    `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json, phone, website, email, hours, contact_source
      FROM tertiary_occupants WHERE building_id = ? ORDER BY est_siege DESC, denomination`,
     [buildingId],
   );
@@ -127,7 +132,7 @@ export async function GET(
         );
       }
       occupants = await db.all<Occupant>(
-        `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json
+        `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json, phone, website, email, hours, contact_source
          FROM tertiary_occupants WHERE building_id = ? ORDER BY est_siege DESC, denomination`,
         [buildingId],
       );

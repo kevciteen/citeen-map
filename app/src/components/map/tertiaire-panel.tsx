@@ -13,6 +13,10 @@ import {
   ExternalLink,
   Receipt,
   UserCheck,
+  Phone,
+  Globe,
+  Mail,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -77,6 +81,11 @@ type Occupant = {
   tranche_effectif: string | null;
   est_siege: number | null;
   dirigeants?: Dirigeant[];
+  phone?: string | null;
+  website?: string | null;
+  email?: string | null;
+  hours?: string | null;
+  contact_source?: string | null;
 };
 
 // Code tranche INSEE → ordre numérique pour le tri (NN=null = -1)
@@ -154,6 +163,7 @@ export function TertiairePanel({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   const [dvf, setDvf] = useState<{ transactions: DvfTx[]; stats: { count: number; last_sale_date: string | null; last_sale_price: number | null } } | null>(null);
   const [dvfLoading, setDvfLoading] = useState(false);
 
@@ -189,6 +199,25 @@ export function TertiairePanel({
   };
 
   useEffect(() => { load(); loadDvf(); }, [buildingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const enrichContacts = async () => {
+    setEnriching(true);
+    try {
+      const res = await fetch(`/api/tertiaire/${buildingId}/enrich-contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ onlyEmployers: false }),
+      });
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const j = await res.json() as { candidats: number; enrichis: number; sans_contact: number };
+      toast.success(`${j.enrichis} coordonnée(s) trouvée(s) sur ${j.candidats} (${j.sans_contact} sans contact)`);
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   const createProspect = async () => {
     setCreating(true);
@@ -280,6 +309,17 @@ export function TertiairePanel({
           >
             {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Rafraîchir
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={enrichContacts}
+            disabled={enriching}
+            className="gap-1.5"
+            title="Récupère téléphone, site web, horaires (OSM puis Google Places)"
+          >
+            {enriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            Coordonnées
           </Button>
         </div>
 
@@ -385,6 +425,31 @@ function OccupantPanelRow({ o, accent }: { o: Occupant; accent: "real" | "domic"
             <p className="truncate text-[10px] text-muted-foreground">
               {o.naf_code} · {o.naf_label}
             </p>
+          ) : null}
+          {(o.phone || o.website || o.email) ? (
+            <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+              {o.phone ? (
+                <a href={`tel:${o.phone}`} className="flex items-center gap-1 text-blue-700 hover:underline">
+                  <Phone className="h-2.5 w-2.5" />
+                  {o.phone}
+                </a>
+              ) : null}
+              {o.website ? (
+                <a href={o.website.startsWith("http") ? o.website : `https://${o.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-700 hover:underline">
+                  <Globe className="h-2.5 w-2.5" />
+                  Site web
+                </a>
+              ) : null}
+              {o.email ? (
+                <a href={`mailto:${o.email}`} className="flex items-center gap-1 text-blue-700 hover:underline">
+                  <Mail className="h-2.5 w-2.5" />
+                  {o.email}
+                </a>
+              ) : null}
+              {o.contact_source ? (
+                <span className="text-[9px] italic text-muted-foreground">via {o.contact_source}</span>
+              ) : null}
+            </div>
           ) : null}
           {o.dirigeants && o.dirigeants.length > 0 ? (
             <div className="mt-1.5 border-t border-border/30 pt-1.5">
