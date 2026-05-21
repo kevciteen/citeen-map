@@ -361,114 +361,131 @@ export function TertiairePanel({
   );
 }
 
-function SortedOccupants({ occupants }: { occupants: Occupant[] }) {
-  const [hideDomic, setHideDomic] = useState(false);
+function OccupantPanelRow({ o, accent }: { o: Occupant; accent: "real" | "domic" }) {
+  return (
+    <li
+      className={`rounded border p-2 ${
+        accent === "real" ? "border-emerald-200 bg-emerald-50/30" : "border-amber-200 bg-amber-50/30"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold">
+            {o.denomination ?? "(sans dénomination)"}
+          </p>
+          <p className="truncate text-[10px] text-muted-foreground">
+            SIRET {o.siret}
+            {o.est_siege ? " · siège" : ""}
+            {" · "}
+            <span className={accent === "real" ? "font-semibold text-emerald-700" : "text-amber-700"}>
+              {effectifLabel(o.tranche_effectif)}
+            </span>
+          </p>
+          {o.naf_label ? (
+            <p className="truncate text-[10px] text-muted-foreground">
+              {o.naf_code} · {o.naf_label}
+            </p>
+          ) : null}
+          {o.dirigeants && o.dirigeants.length > 0 ? (
+            <div className="mt-1.5 border-t border-border/30 pt-1.5">
+              <p className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <UserCheck className="h-2.5 w-2.5" />
+                Dirigeants ({o.dirigeants.length})
+              </p>
+              <ul className="space-y-0.5">
+                {o.dirigeants.slice(0, 3).map((d, i) => (
+                  <li key={i} className="text-[10px]">
+                    {d.typeDirigeant === "morale" ? (
+                      <span>
+                        <strong>{d.denominationMorale ?? "(société)"}</strong>
+                        {d.qualite ? <span className="text-muted-foreground"> · {d.qualite}</span> : null}
+                      </span>
+                    ) : (
+                      <span>
+                        {d.prenoms ?? ""} <strong>{d.nom ?? ""}</strong>
+                        {d.qualite ? <span className="text-muted-foreground"> · {d.qualite}</span> : null}
+                      </span>
+                    )}
+                  </li>
+                ))}
+                {o.dirigeants.length > 3 ? (
+                  <li className="text-[10px] text-muted-foreground">+ {o.dirigeants.length - 3} autres…</li>
+                ) : null}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+        {o.siren ? (
+          <a
+            href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:text-primary"
+            title="Voir sur Annuaire Entreprises"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : null}
+      </div>
+    </li>
+  );
+}
 
-  // Tri par effectif décroissant (vrais employeurs d'abord), puis siège, puis nom
+function SortedOccupants({ occupants }: { occupants: Occupant[] }) {
+  const [showDomic, setShowDomic] = useState(false);
   const sorted = [...occupants].sort((a, b) => {
     const r = effectifRank(b.tranche_effectif) - effectifRank(a.tranche_effectif);
     if (r !== 0) return r;
-    const s = (b.est_siege ?? 0) - (a.est_siege ?? 0);
-    if (s !== 0) return s;
     return (a.denomination ?? "").localeCompare(b.denomination ?? "");
   });
-
-  const filtered = hideDomic ? sorted.filter((o) => !isProbableDomiciliation(o)) : sorted;
-  const domicCount = sorted.filter(isProbableDomiciliation).length;
-  const realCount = sorted.length - domicCount;
+  const reals = sorted.filter((o) => !isProbableDomiciliation(o));
+  const domics = sorted.filter(isProbableDomiciliation);
 
   return (
-    <div>
-      {domicCount > 0 ? (
-        <div className="mb-2 flex items-center justify-between rounded border border-border/50 bg-amber-50 px-2 py-1.5 text-[10px]">
-          <span className="text-amber-900">
-            <strong>{realCount}</strong> employeur(s) · <strong>{domicCount}</strong> domiciliation(s) probable(s)
+    <div className="space-y-3">
+      {/* Section 1 : sociétés présentes (avec salariés) */}
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="inline-flex h-5 items-center gap-1 rounded-full bg-emerald-100 px-2 text-[10px] font-semibold text-emerald-900">
+            ● {reals.length} société(s) présente(s)
           </span>
+        </div>
+        {reals.length === 0 ? (
+          <p className="rounded border border-border/50 bg-secondary/20 p-2 text-[10px] text-muted-foreground">
+            Aucune société avec salariés. Toutes domiciliées (boîte aux lettres).
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {reals.slice(0, 30).map((o) => <OccupantPanelRow key={o.id} o={o} accent="real" />)}
+            {reals.length > 30 ? <p className="text-[10px] text-muted-foreground">+ {reals.length - 30} autres…</p> : null}
+          </ul>
+        )}
+      </div>
+
+      {/* Section 2 : domiciliations (collapsable) */}
+      {domics.length > 0 ? (
+        <div>
           <button
-            onClick={() => setHideDomic((v) => !v)}
-            className="rounded bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
+            onClick={() => setShowDomic((v) => !v)}
+            className="mb-2 flex w-full items-center justify-between rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] hover:bg-amber-100"
           >
-            {hideDomic ? "Tout afficher" : "Cacher domiciliations"}
+            <span className="font-semibold text-amber-900">
+              ○ {domics.length} domiciliation(s) probable(s)
+            </span>
+            <span className="text-amber-900">{showDomic ? "Masquer ▲" : "Afficher ▼"}</span>
           </button>
+          {showDomic ? (
+            <ul className="space-y-2">
+              {domics.slice(0, 30).map((o) => <OccupantPanelRow key={o.id} o={o} accent="domic" />)}
+              {domics.length > 30 ? <p className="text-[10px] text-muted-foreground">+ {domics.length - 30} autres…</p> : null}
+            </ul>
+          ) : (
+            <p className="text-[10px] italic text-muted-foreground">
+              SCI, holdings, sociétés sans salariés. Souvent juste enregistrées à l'adresse.
+            </p>
+          )}
         </div>
       ) : null}
-      <ul className="space-y-2">
-        {filtered.slice(0, 30).map((o) => {
-          const isDomic = isProbableDomiciliation(o);
-          return (
-            <li
-              key={o.id}
-              className={`rounded border p-2 ${
-                isDomic ? "border-border/40 bg-secondary/10 opacity-70" : "border-border/50 bg-secondary/20"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold">
-                    {o.denomination ?? "(sans dénomination)"}
-                  </p>
-                  <p className="truncate text-[10px] text-muted-foreground">
-                    SIRET {o.siret}
-                    {o.est_siege ? " · siège" : ""}
-                    {" · "}
-                    <span className={isDomic ? "" : "font-semibold text-emerald-700"}>
-                      {effectifLabel(o.tranche_effectif)}
-                    </span>
-                    {isDomic ? <span className="text-amber-700"> · domic. probable</span> : null}
-                  </p>
-                  {o.naf_label ? (
-                    <p className="truncate text-[10px] text-muted-foreground">
-                      {o.naf_code} · {o.naf_label}
-                    </p>
-                  ) : null}
-                  {o.dirigeants && o.dirigeants.length > 0 ? (
-                    <div className="mt-1.5 border-t border-border/30 pt-1.5">
-                      <p className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        <UserCheck className="h-2.5 w-2.5" />
-                        Dirigeants ({o.dirigeants.length})
-                      </p>
-                      <ul className="space-y-0.5">
-                        {o.dirigeants.slice(0, 3).map((d, i) => (
-                          <li key={i} className="text-[10px]">
-                            {d.typeDirigeant === "morale" ? (
-                              <span>
-                                <strong>{d.denominationMorale ?? "(société)"}</strong>
-                                {d.qualite ? <span className="text-muted-foreground"> · {d.qualite}</span> : null}
-                              </span>
-                            ) : (
-                              <span>
-                                {d.prenoms ?? ""} <strong>{d.nom ?? ""}</strong>
-                                {d.qualite ? <span className="text-muted-foreground"> · {d.qualite}</span> : null}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                        {o.dirigeants.length > 3 ? (
-                          <li className="text-[10px] text-muted-foreground">+ {o.dirigeants.length - 3} autres…</li>
-                        ) : null}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
-                {o.siren ? (
-                  <a
-                    href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-primary"
-                    title="Voir sur Annuaire Entreprises"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-        {filtered.length > 30 ? (
-          <p className="text-[10px] text-muted-foreground">+ {filtered.length - 30} autres…</p>
-        ) : null}
-      </ul>
     </div>
   );
 }

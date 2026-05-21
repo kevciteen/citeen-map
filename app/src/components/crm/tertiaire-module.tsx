@@ -436,79 +436,106 @@ function isDomic(o: OccupantSearch): boolean {
   return !o.trancheEffectif || o.trancheEffectif === "NN" || o.trancheEffectif === "00";
 }
 
+function OccupantRow({ o, accent }: { o: OccupantSearch; accent: "real" | "domic" }) {
+  return (
+    <li
+      className={`rounded-lg border p-3 text-sm ${
+        accent === "real" ? "border-emerald-200 bg-emerald-50/30" : "border-amber-200 bg-amber-50/30"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold">{o.denomination ?? "(sans dénomination)"}</p>
+          <p className="truncate text-[11px] text-muted-foreground">
+            SIRET {o.siret}
+            {o.estSiege ? " · siège" : ""}
+            {" · "}
+            <span className={accent === "real" ? "font-semibold text-emerald-700" : "text-amber-700"}>
+              {effLabel(o.trancheEffectif)}
+            </span>
+          </p>
+          {o.nafLabel ? (
+            <p className="truncate text-[11px] text-muted-foreground">
+              {o.nafCode} · {o.nafLabel}
+            </p>
+          ) : null}
+        </div>
+        {o.siren ? (
+          <a
+            href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:text-primary"
+            title="Voir sur Annuaire Entreprises"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
 function SortedOccupantsList({ occupants }: { occupants: OccupantSearch[] }) {
-  const [hideDomic, setHideDomic] = useState(false);
+  const [showDomic, setShowDomic] = useState(false);
   const sorted = [...occupants].sort((a, b) => {
     const r = effRank(b.trancheEffectif) - effRank(a.trancheEffectif);
     if (r !== 0) return r;
-    const s = (b.estSiege ? 1 : 0) - (a.estSiege ? 1 : 0);
-    if (s !== 0) return s;
     return (a.denomination ?? "").localeCompare(b.denomination ?? "");
   });
-  const domicCount = sorted.filter(isDomic).length;
-  const realCount = sorted.length - domicCount;
-  const filtered = hideDomic ? sorted.filter((o) => !isDomic(o)) : sorted;
+  const reals = sorted.filter((o) => !isDomic(o));
+  const domics = sorted.filter(isDomic);
 
   return (
-    <div>
-      {domicCount > 0 ? (
-        <div className="mb-2 flex items-center justify-between rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs">
-          <span className="text-amber-900">
-            <strong>{realCount}</strong> employeur(s) · <strong>{domicCount}</strong> domiciliation(s) probable(s)
+    <div className="space-y-4">
+      {/* Section 1 : présence physique réelle (employeurs avec salariés) */}
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="inline-flex h-5 items-center gap-1 rounded-full bg-emerald-100 px-2 text-[11px] font-semibold text-emerald-900">
+            ● {reals.length} société(s) présente(s)
           </span>
+          <span className="text-[10px] text-muted-foreground">avec salariés / activité réelle</span>
+        </div>
+        {reals.length === 0 ? (
+          <p className="rounded border border-border/50 bg-secondary/20 p-2 text-xs text-muted-foreground">
+            Aucune société avec salariés enregistrée. Toutes les sociétés à cette adresse semblent
+            être domiciliées (boîte aux lettres).
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {reals.slice(0, 30).map((o) => <OccupantRow key={o.siret} o={o} accent="real" />)}
+            {reals.length > 30 ? <p className="text-xs text-muted-foreground">+ {reals.length - 30} autres employeurs…</p> : null}
+          </ul>
+        )}
+      </div>
+
+      {/* Section 2 : domiciliations probables (collapsable) */}
+      {domics.length > 0 ? (
+        <div>
           <button
-            onClick={() => setHideDomic((v) => !v)}
-            className="rounded bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+            onClick={() => setShowDomic((v) => !v)}
+            className="mb-2 flex w-full items-center justify-between rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs hover:bg-amber-100"
           >
-            {hideDomic ? "Tout afficher" : "Cacher domic."}
+            <span className="font-semibold text-amber-900">
+              ○ {domics.length} domiciliation(s) probable(s)
+            </span>
+            <span className="text-[11px] text-amber-900">
+              {showDomic ? "Masquer ▲" : "Afficher ▼"}
+            </span>
           </button>
+          {showDomic ? (
+            <ul className="space-y-2">
+              {domics.slice(0, 30).map((o) => <OccupantRow key={o.siret} o={o} accent="domic" />)}
+              {domics.length > 30 ? <p className="text-xs text-muted-foreground">+ {domics.length - 30} autres…</p> : null}
+            </ul>
+          ) : (
+            <p className="text-[11px] italic text-muted-foreground">
+              SCI, holdings, sociétés sans salariés enregistrées à l'adresse mais probablement
+              sans présence physique. Cliquez pour voir.
+            </p>
+          )}
         </div>
       ) : null}
-      <ul className="space-y-2">
-        {filtered.slice(0, 30).map((o) => {
-          const domic = isDomic(o);
-          return (
-            <li
-              key={o.siret}
-              className={`rounded-lg border p-3 text-sm ${
-                domic ? "border-border/40 bg-secondary/10 opacity-70" : "border-border/50 bg-secondary/30"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold">{o.denomination ?? "(sans dénomination)"}</p>
-                  <p className="truncate text-[11px] text-muted-foreground">
-                    SIRET {o.siret}
-                    {o.estSiege ? " · siège" : ""}
-                    {" · "}
-                    <span className={domic ? "" : "font-semibold text-emerald-700"}>
-                      {effLabel(o.trancheEffectif)}
-                    </span>
-                    {domic ? <span className="text-amber-700"> · domic. probable</span> : null}
-                  </p>
-                  {o.nafLabel ? (
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      {o.nafCode} · {o.nafLabel}
-                    </p>
-                  ) : null}
-                </div>
-                {o.siren ? (
-                  <a
-                    href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-primary"
-                    title="Voir sur Annuaire Entreprises"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-        {filtered.length > 30 ? <p className="text-xs text-muted-foreground">+ {filtered.length - 30} autres…</p> : null}
-      </ul>
     </div>
   );
 }
