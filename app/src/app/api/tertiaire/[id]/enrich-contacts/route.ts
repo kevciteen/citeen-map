@@ -52,14 +52,23 @@ export async function POST(
   );
   if (!building) return NextResponse.json({ error: "Bâtiment introuvable" }, { status: 404 });
 
-  const body = await req.json().catch(() => ({})) as { onlyEmployers?: boolean };
+  const body = await req.json().catch(() => ({})) as { onlyEmployers?: boolean; occupantId?: number };
   const onlyEmployers = Boolean(body.onlyEmployers);
+  const occupantId = body.occupantId;
 
-  // Récupère les occupants à enrichir (skip ceux qui ont déjà phone OU website)
-  let where = "building_id = ? AND (phone IS NULL OR phone = '') AND (website IS NULL OR website = '')";
+  // Récupère les occupants à enrichir
+  let where = "building_id = ?";
   const args: (string | number | null)[] = [buildingId];
-  if (onlyEmployers) {
-    where += " AND tranche_effectif IS NOT NULL AND tranche_effectif != 'NN' AND tranche_effectif != '00'";
+  if (occupantId) {
+    // Ciblé : un seul occupant (peut être déjà enrichi → force re-fetch)
+    where += " AND id = ?";
+    args.push(occupantId);
+  } else {
+    // Batch : skip ceux qui ont déjà phone OU website
+    where += " AND (phone IS NULL OR phone = '') AND (website IS NULL OR website = '')";
+    if (onlyEmployers) {
+      where += " AND tranche_effectif IS NOT NULL AND tranche_effectif != 'NN' AND tranche_effectif != '00'";
+    }
   }
   const rows = await db.all<Row>(
     `SELECT id, denomination, adresse_enregistree, tranche_effectif, phone, website

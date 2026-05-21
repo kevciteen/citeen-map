@@ -388,7 +388,7 @@ export function TertiairePanel({
               </p>
             </div>
           ) : (
-            <SortedOccupants occupants={occupants} />
+            <SortedOccupants occupants={occupants} buildingId={buildingId} onChanged={() => load()} />
           )}
         </section>
 
@@ -401,7 +401,36 @@ export function TertiairePanel({
   );
 }
 
-function OccupantPanelRow({ o, accent }: { o: Occupant; accent: "real" | "domic" }) {
+function OccupantPanelRow({ o, accent, buildingId, onEnriched }: {
+  o: Occupant;
+  accent: "real" | "domic";
+  buildingId: number;
+  onEnriched: () => void;
+}) {
+  const [enriching, setEnriching] = useState(false);
+
+  const enrich = async () => {
+    setEnriching(true);
+    try {
+      const res = await fetch(`/api/tertiaire/${buildingId}/enrich-contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ occupantId: o.id }),
+      });
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const j = await res.json() as { enrichis: number; sans_contact: number };
+      if (j.enrichis > 0) toast.success("Coordonnées trouvées");
+      else toast.info("Aucune coordonnée trouvée (OSM + Google)");
+      onEnriched();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const hasContacts = Boolean(o.phone || o.website || o.email);
+
   return (
     <li
       className={`rounded border p-2 ${
@@ -480,23 +509,39 @@ function OccupantPanelRow({ o, accent }: { o: Occupant; accent: "real" | "domic"
             </div>
           ) : null}
         </div>
-        {o.siren ? (
-          <a
-            href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-muted-foreground hover:text-primary"
-            title="Voir sur Annuaire Entreprises"
-          >
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        ) : null}
+        <div className="flex flex-col items-end gap-1">
+          {!hasContacts ? (
+            <button
+              onClick={enrich}
+              disabled={enriching}
+              className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-900 hover:bg-blue-200 disabled:opacity-50"
+              title="Récupérer téléphone, site web (OSM + Google)"
+            >
+              {enriching ? "…" : "📞 Trouver"}
+            </button>
+          ) : null}
+          {o.siren ? (
+            <a
+              href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-primary"
+              title="Voir sur Annuaire Entreprises"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+        </div>
       </div>
     </li>
   );
 }
 
-function SortedOccupants({ occupants }: { occupants: Occupant[] }) {
+function SortedOccupants({ occupants, buildingId, onChanged }: {
+  occupants: Occupant[];
+  buildingId: number;
+  onChanged: () => void;
+}) {
   const [showDomic, setShowDomic] = useState(false);
   const sorted = [...occupants].sort((a, b) => {
     const r = effectifRank(b.tranche_effectif) - effectifRank(a.tranche_effectif);
@@ -521,7 +566,7 @@ function SortedOccupants({ occupants }: { occupants: Occupant[] }) {
           </p>
         ) : (
           <ul className="space-y-2">
-            {reals.slice(0, 30).map((o) => <OccupantPanelRow key={o.id} o={o} accent="real" />)}
+            {reals.slice(0, 30).map((o) => <OccupantPanelRow key={o.id} o={o} accent="real" buildingId={buildingId} onEnriched={onChanged} />)}
             {reals.length > 30 ? <p className="text-[10px] text-muted-foreground">+ {reals.length - 30} autres…</p> : null}
           </ul>
         )}
@@ -541,7 +586,7 @@ function SortedOccupants({ occupants }: { occupants: Occupant[] }) {
           </button>
           {showDomic ? (
             <ul className="space-y-2">
-              {domics.slice(0, 30).map((o) => <OccupantPanelRow key={o.id} o={o} accent="domic" />)}
+              {domics.slice(0, 30).map((o) => <OccupantPanelRow key={o.id} o={o} accent="domic" buildingId={buildingId} onEnriched={onChanged} />)}
               {domics.length > 30 ? <p className="text-[10px] text-muted-foreground">+ {domics.length - 30} autres…</p> : null}
             </ul>
           ) : (
