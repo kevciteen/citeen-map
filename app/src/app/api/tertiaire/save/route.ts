@@ -98,10 +98,17 @@ export async function POST(req: NextRequest) {
   const commune = payload.geocode.city ?? null;
   const codeInsee = payload.geocode.citycode ?? null;
   const departement = codePostal ? codePostal.substring(0, 2) : null;
-  const typeUsage = payload.bdnb?.typeUsage ?? payload.dpeTertiaire?.type_usage_principal ?? null;
+  // Le DpeTertiaireRecord a [key: string]: unknown ; on coerce explicitement.
+  const dpeUsage = typeof payload.dpeTertiaire?.secteur_activite === "string"
+    ? payload.dpeTertiaire.secteur_activite
+    : null;
+  const typeUsage: string | null = payload.bdnb?.typeUsage ?? dpeUsage;
   const secteur = mapTypeUsageToSecteur(typeUsage);
-  const surface = payload.bdnb?.surfaceUtileTertiaire ?? Number(payload.dpeTertiaire?.surface_utile ?? 0) ?? null;
-  const anneeConstruction = Number(payload.dpeTertiaire?.annee_construction ?? 0) || null;
+  const surface: number | null =
+    payload.bdnb?.surfaceUtileTertiaire ??
+    (Number(payload.dpeTertiaire?.surface_utile ?? 0) || null);
+  const anneeConstruction: number | null =
+    Number(payload.dpeTertiaire?.annee_construction ?? 0) || null;
   const section = payload.parcelle?.section ?? null;
   const numeroParcelle = payload.parcelle?.numero ?? null;
   const refCadastrale = payload.parcelle?.idu ?? null;

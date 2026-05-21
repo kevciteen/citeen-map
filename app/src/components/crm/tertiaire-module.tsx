@@ -190,7 +190,7 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
 
   const simulerCee = () => {
     if (!result) return;
-    const surface = result.bdnb?.surfaceUtileTertiaire ?? Number(result.dpeTertiaire?.surface_utile ?? 0) || null;
+    const surface = result.bdnb?.surfaceUtileTertiaire ?? (Number(result.dpeTertiaire?.surface_utile ?? 0) || null);
     const year = Number(result.dpeTertiaire?.annee_construction ?? 0) || null;
     onSimulerCee({
       sector: mapTypeToSecteur(result.bdnb?.typeUsage ?? result.dpeTertiaire?.type_usage_principal),
