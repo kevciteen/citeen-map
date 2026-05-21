@@ -187,18 +187,26 @@ export function TertiaireMap({
     if (!ready || !mapRef.current) return;
     const source = mapRef.current.getSource("tertiary") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
-    const features: GeoJSON.Feature[] = points.map((p) => ({
-      type: "Feature",
-      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-      properties: {
-        id: p.id,
-        label: p.label ?? p.adresse ?? `#${p.id}`,
-        dpe: p.etiquette_dpe ?? "NC",
-        secteur: p.secteur ?? "",
-        surface: p.surface_m2 ?? null,
-        selected: p.id === selectedId,
-      },
-    }));
+    const features: GeoJSON.Feature[] = points
+      .filter(
+        (p) =>
+          typeof p.lat === "number" &&
+          typeof p.lon === "number" &&
+          Number.isFinite(p.lat) &&
+          Number.isFinite(p.lon),
+      )
+      .map((p) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+        properties: {
+          id: p.id,
+          label: p.label ?? p.adresse ?? `#${p.id}`,
+          dpe: p.etiquette_dpe ?? "NC",
+          secteur: p.secteur ?? "",
+          surface: p.surface_m2 ?? null,
+          selected: p.id === selectedId,
+        },
+      }));
     source.setData({ type: "FeatureCollection", features });
   }, [points, selectedId, ready]);
 

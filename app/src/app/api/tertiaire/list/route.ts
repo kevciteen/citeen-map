@@ -30,7 +30,8 @@ export async function GET(req: NextRequest) {
   const cp = sp.get("cp");
   const limit = Math.min(Number(sp.get("limit") ?? "1000"), 5000);
 
-  const where: string[] = [];
+  // Garde-fou : exclut toujours les bâtiments sans coordonnées (sinon MapLibre crash)
+  const where: string[] = ["b.lat IS NOT NULL", "b.lon IS NOT NULL"];
   const args: InValue[] = [];
 
   if (bbox && bbox.length === 4 && bbox.every(Number.isFinite)) {
