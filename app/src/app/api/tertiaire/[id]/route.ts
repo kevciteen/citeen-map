@@ -54,6 +54,7 @@ type Occupant = {
   naf_label: string | null;
   tranche_effectif: string | null;
   est_siege: number | null;
+  dirigeants_json: string | null;
 };
 
 export async function GET(
@@ -87,7 +88,7 @@ export async function GET(
 
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
   let occupants = await db.all<Occupant>(
-    `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege
+    `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json
      FROM tertiary_occupants WHERE building_id = ? ORDER BY est_siege DESC, denomination`,
     [buildingId],
   );
@@ -100,14 +101,14 @@ export async function GET(
         codePostal: building.code_postal ?? undefined,
         limit: 50,
       });
-      // Re-persiste : delete + insert
+      // Re-persiste : delete + insert (avec dirigeants en JSON)
       await db.run(`DELETE FROM tertiary_occupants WHERE building_id = ?`, [buildingId]);
       for (const o of fresh) {
         await db.run(
           `INSERT INTO tertiary_occupants (
              building_id, siret, siren, denomination, naf_code, naf_label,
-             tranche_effectif, adresse_enregistree, est_siege, est_actif
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             tranche_effectif, adresse_enregistree, est_siege, est_actif, dirigeants_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             buildingId,
             o.siret,
@@ -119,16 +120,23 @@ export async function GET(
             o.adresseEnregistree,
             o.estSiege ? 1 : 0,
             o.estActif ? 1 : 0,
+            o.dirigeants && o.dirigeants.length > 0 ? JSON.stringify(o.dirigeants) : null,
           ],
         );
       }
       occupants = await db.all<Occupant>(
-        `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege
+        `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json
          FROM tertiary_occupants WHERE building_id = ? ORDER BY est_siege DESC, denomination`,
         [buildingId],
       );
     }
   }
+
+  // Désérialise dirigeants_json pour les renvoyer en array direct
+  const occupantsWithDirigeants = occupants.map((o) => ({
+    ...o,
+    dirigeants: o.dirigeants_json ? JSON.parse(o.dirigeants_json) : [],
+  }));
 
   // Synthèse pour le moteur CEE
   const ceeProject = {
@@ -148,7 +156,7 @@ export async function GET(
   return NextResponse.json({
     building,
     dpe,
-    occupants,
+    occupants: occupantsWithDirigeants,
     occupantsCount: occupants.length,
     prospect,
     ceeProject,

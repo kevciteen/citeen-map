@@ -138,6 +138,10 @@ export default function MapPage() {
         if (commune) sp.set("commune", commune);
         else if (!cp && !qIsLikelyCp && f.q.trim()) sp.set("commune", f.q.trim());
         if (f.dpeClasses.length) sp.set("dpe", f.dpeClasses.join(","));
+        if (f.surfaceMin != null) sp.set("surfaceMin", String(f.surfaceMin));
+        if (f.surfaceMax != null) sp.set("surfaceMax", String(f.surfaceMax));
+        if (f.yearMin != null) sp.set("yearMin", String(f.yearMin));
+        if (f.yearMax != null) sp.set("yearMax", String(f.yearMax));
         sp.set("limit", "500");
         if (!sp.has("cp") && !sp.has("commune")) return null;
         return sp;
@@ -194,6 +198,8 @@ export default function MapPage() {
         if (f.dpeClasses.length) sp.set("dpe", f.dpeClasses.join(","));
         if (f.surfaceMin != null) sp.set("surfaceMin", String(f.surfaceMin));
         if (f.surfaceMax != null) sp.set("surfaceMax", String(f.surfaceMax));
+        if (f.yearMin != null) sp.set("yearMin", String(f.yearMin));
+        if (f.yearMax != null) sp.set("yearMax", String(f.yearMax));
         if (f.proprietaire) sp.set("proprietaire", f.proprietaire);
         tasks.push(
           fetch(`/api/tertiaire/list?${sp}`)

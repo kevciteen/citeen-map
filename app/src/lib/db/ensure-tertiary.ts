@@ -71,6 +71,7 @@ export async function ensureTertiary(): Promise<void> {
       adresse_enregistree TEXT,
       est_siege INTEGER,
       est_actif INTEGER,
+      dirigeants_json TEXT,
       cached_at INTEGER DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_occupants_building ON tertiary_occupants(building_id);
@@ -89,6 +90,12 @@ export async function ensureTertiary(): Promise<void> {
   await db.exec(
     `CREATE INDEX IF NOT EXISTS idx_prospects_tertiary ON prospects(tertiary_building_id)`,
   );
+
+  // ALTER idempotent : colonne dirigeants_json (ajoutée après le déploiement initial)
+  const occCols = await db.all<{ name: string }>(`PRAGMA table_info(tertiary_occupants)`);
+  if (!occCols.some((c) => c.name === "dirigeants_json")) {
+    await db.exec(`ALTER TABLE tertiary_occupants ADD COLUMN dirigeants_json TEXT`);
+  }
 
   ensured = true;
 }

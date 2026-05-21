@@ -36,6 +36,8 @@ export async function GET(req: NextRequest) {
   const q = sp.get("q");
   const surfaceMin = sp.get("surfaceMin");
   const surfaceMax = sp.get("surfaceMax");
+  const yearMin = sp.get("yearMin");
+  const yearMax = sp.get("yearMax");
   const proprietaire = sp.get("proprietaire");
   const limit = Math.min(Number(sp.get("limit") ?? "1000"), 5000);
 
@@ -74,6 +76,14 @@ export async function GET(req: NextRequest) {
   if (surfaceMax && Number.isFinite(Number(surfaceMax))) {
     where.push(`b.surface_m2 <= ?`);
     args.push(Number(surfaceMax));
+  }
+  if (yearMin && Number.isFinite(Number(yearMin))) {
+    where.push(`b.annee_construction >= ?`);
+    args.push(Number(yearMin));
+  }
+  if (yearMax && Number.isFinite(Number(yearMax))) {
+    where.push(`b.annee_construction <= ?`);
+    args.push(Number(yearMax));
   }
   if (dpe && dpe.length > 0) {
     const classes = dpe.toUpperCase().split(/[,\s]+/).filter((c) => "ABCDEFG".includes(c));

@@ -25,6 +25,33 @@ export type EntrepriseAtAddress = {
   adresseEnregistree: string | null;
   estSiege: boolean;
   estActif: boolean;
+  dirigeants?: Dirigeant[];
+};
+
+function mapDirigeant(d: RawDirigeant): Dirigeant {
+  const type = d.type_dirigeant?.toLowerCase().includes("moral")
+    ? "morale"
+    : d.type_dirigeant?.toLowerCase().includes("physi")
+      ? "physique"
+      : null;
+  return {
+    nom: d.nom ?? null,
+    prenoms: d.prenoms ?? null,
+    qualite: d.qualite ?? null,
+    typeDirigeant: type,
+    denominationMorale: d.denomination ?? null,
+    sirenMorale: d.siren ?? null,
+  };
+}
+
+type RawDirigeant = {
+  nom?: string;
+  prenoms?: string;
+  qualite?: string;
+  date_naissance?: string;
+  type_dirigeant?: string; // "personne physique" | "personne morale"
+  denomination?: string; // si personne morale
+  siren?: string;
 };
 
 type RawResult = {
@@ -35,6 +62,7 @@ type RawResult = {
   activite_principale?: string;
   section_activite_principale?: string;
   tranche_effectif_salarie?: string;
+  dirigeants?: RawDirigeant[];
   matching_etablissements?: Array<{
     siret?: string;
     activite_principale?: string;
@@ -44,6 +72,15 @@ type RawResult = {
     est_siege?: boolean;
     etat_administratif?: string;
   }>;
+};
+
+export type Dirigeant = {
+  nom: string | null;
+  prenoms: string | null;
+  qualite: string | null;
+  typeDirigeant: "physique" | "morale" | null;
+  denominationMorale: string | null;
+  sirenMorale: string | null;
 };
 
 type RawResponse = {
@@ -58,9 +95,8 @@ function mapResultsToOccupants(json: RawResponse): EntrepriseAtAddress[] {
     const denomination = r.nom_complete ?? r.nom_raison_sociale ?? null;
     const naf = r.activite_principale ?? null;
     const trancheEffectif = r.tranche_effectif_salarie ?? null;
+    const dirigeants = (r.dirigeants ?? []).map(mapDirigeant);
 
-    // Un SIREN peut avoir plusieurs établissements (siret) matchant l'adresse.
-    // On émet un occupant par SIRET retourné par `matching_etablissements`.
     const etabs = r.matching_etablissements ?? [];
     if (etabs.length === 0 && siren) {
       out.push({
@@ -73,6 +109,7 @@ function mapResultsToOccupants(json: RawResponse): EntrepriseAtAddress[] {
         adresseEnregistree: null,
         estSiege: false,
         estActif: true,
+        dirigeants,
       });
       continue;
     }
@@ -89,6 +126,7 @@ function mapResultsToOccupants(json: RawResponse): EntrepriseAtAddress[] {
         adresseEnregistree: e.adresse ?? null,
         estSiege: Boolean(e.est_siege),
         estActif: (e.etat_administratif ?? "A") === "A",
+        dirigeants,
       });
     }
   }

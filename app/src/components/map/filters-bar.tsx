@@ -37,10 +37,12 @@ export type MapFilters = {
   minLots: number | null;
   periode: string;
   mode: MapMode;
-  // Filtres tertiaire avancés
+  // Avancés tertiaire + maisons/apparts
   secteurTertiaire: string;
   surfaceMin: number | null;
   surfaceMax: number | null;
+  yearMin: number | null;
+  yearMax: number | null;
   proprietaire: string;
 };
 
@@ -57,6 +59,8 @@ export const DEFAULT_FILTERS: MapFilters = {
   secteurTertiaire: "",
   surfaceMin: null,
   surfaceMax: null,
+  yearMin: null,
+  yearMax: null,
   proprietaire: "",
 };
 
@@ -230,8 +234,8 @@ export function FiltersBar({
               </div>
             </div>
 
-            {/* Surface tertiaire min/max */}
-            {showsTertiaire ? (
+            {/* Surface min/max (tertiaire + maisons/apparts) */}
+            {(showsTertiaire || showsMaisons) ? (
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   type="number"
@@ -250,6 +254,32 @@ export function FiltersBar({
                     onChange({ ...value, surfaceMax: e.target.value === "" ? null : Number(e.target.value) })
                   }
                   placeholder="Surface max m²"
+                />
+              </div>
+            ) : null}
+
+            {/* Année construction min/max (tertiaire + maisons/apparts) */}
+            {(showsTertiaire || showsMaisons) ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="number"
+                  min={1700}
+                  max={new Date().getFullYear()}
+                  value={value.yearMin ?? ""}
+                  onChange={(e) =>
+                    onChange({ ...value, yearMin: e.target.value === "" ? null : Number(e.target.value) })
+                  }
+                  placeholder="Année construct. min"
+                />
+                <Input
+                  type="number"
+                  min={1700}
+                  max={new Date().getFullYear()}
+                  value={value.yearMax ?? ""}
+                  onChange={(e) =>
+                    onChange({ ...value, yearMax: e.target.value === "" ? null : Number(e.target.value) })
+                  }
+                  placeholder="Année construct. max"
                 />
               </div>
             ) : null}

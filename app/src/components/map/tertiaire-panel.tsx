@@ -11,11 +11,32 @@ import {
   Loader2,
   CheckCircle2,
   ExternalLink,
+  Receipt,
+  UserCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+
+type Dirigeant = {
+  nom: string | null;
+  prenoms: string | null;
+  qualite: string | null;
+  typeDirigeant: "physique" | "morale" | null;
+  denominationMorale: string | null;
+  sirenMorale: string | null;
+};
+
+type DvfTx = {
+  id_mutation: string;
+  date_mutation: string;
+  nature_mutation: string;
+  valeur_fonciere: number | null;
+  type_local: string;
+  surface_reelle_bati: number | null;
+  prix_m2: number | null;
+};
 
 type Building = {
   id: number;
@@ -55,6 +76,7 @@ type Occupant = {
   naf_label: string | null;
   tranche_effectif: string | null;
   est_siege: number | null;
+  dirigeants?: Dirigeant[];
 };
 
 type Detail = {
@@ -107,6 +129,8 @@ export function TertiairePanel({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [dvf, setDvf] = useState<{ transactions: DvfTx[]; stats: { count: number; last_sale_date: string | null; last_sale_price: number | null } } | null>(null);
+  const [dvfLoading, setDvfLoading] = useState(false);
 
   const load = async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -124,7 +148,22 @@ export function TertiairePanel({
     }
   };
 
-  useEffect(() => { load(); }, [buildingId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loadDvf = async () => {
+    setDvfLoading(true);
+    try {
+      const res = await fetch(`/api/tertiaire/${buildingId}/dvf`);
+      if (!res.ok) throw new Error(`DVF ${res.status}`);
+      const json = await res.json() as { transactions: DvfTx[]; stats: { count: number; last_sale_date: string | null; last_sale_price: number | null } };
+      setDvf(json);
+    } catch (err) {
+      // silencieux : DVF est best-effort
+      setDvf({ transactions: [], stats: { count: 0, last_sale_date: null, last_sale_price: null } });
+    } finally {
+      setDvfLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); loadDvf(); }, [buildingId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createProspect = async () => {
     setCreating(true);
@@ -238,6 +277,12 @@ export function TertiairePanel({
                 {dpe.emissions_ges ? <Row label="Émissions" value={`${dpe.emissions_ges.toLocaleString("fr-FR")} kgCO₂/m²/an`} /> : null}
                 {dpe.surface_utile ? <Row label="Surface DPE" value={`${dpe.surface_utile.toLocaleString("fr-FR")} m²`} /> : null}
                 {dpe.numero_dpe ? <Row label="N° DPE" value={dpe.numero_dpe} /> : null}
+                {dpe.date_etablissement ? (
+                  <Row
+                    label="Date DPE"
+                    value={new Date(dpe.date_etablissement * 1000).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}
+                  />
+                ) : null}
               </dl>
             </div>
           ) : (
@@ -291,6 +336,34 @@ export function TertiairePanel({
                           {o.naf_code} · {o.naf_label}
                         </p>
                       ) : null}
+                      {o.dirigeants && o.dirigeants.length > 0 ? (
+                        <div className="mt-1.5 border-t border-border/30 pt-1.5">
+                          <p className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <UserCheck className="h-2.5 w-2.5" />
+                            Dirigeants ({o.dirigeants.length})
+                          </p>
+                          <ul className="space-y-0.5">
+                            {o.dirigeants.slice(0, 3).map((d, i) => (
+                              <li key={i} className="text-[10px]">
+                                {d.typeDirigeant === "morale" ? (
+                                  <span>
+                                    <strong>{d.denominationMorale ?? "(société)"}</strong>
+                                    {d.qualite ? <span className="text-muted-foreground"> · {d.qualite}</span> : null}
+                                  </span>
+                                ) : (
+                                  <span>
+                                    {d.prenoms ?? ""} <strong>{d.nom ?? ""}</strong>
+                                    {d.qualite ? <span className="text-muted-foreground"> · {d.qualite}</span> : null}
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                            {o.dirigeants.length > 3 ? (
+                              <li className="text-[10px] text-muted-foreground">+ {o.dirigeants.length - 3} autres…</li>
+                            ) : null}
+                          </ul>
+                        </div>
+                      ) : null}
                     </div>
                     {o.siren ? (
                       <a
@@ -311,8 +384,50 @@ export function TertiairePanel({
               ) : null}
             </ul>
           )}
-          <p className="mt-3 border-t border-border/50 pt-2 text-[10px] italic text-muted-foreground">
-            Propriétaire foncier : non disponible (DV3F / Fichiers fonciers Cerema sous convention).
+        </section>
+
+        <Separator className="my-3" />
+
+        {/* Mutations DVF (propriétaires fonciers personnes morales) */}
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <Receipt className="h-3.5 w-3.5 text-primary" />
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Mutations foncières (DVF, 5 ans)
+              {dvfLoading ? <Loader2 className="ml-2 inline h-2.5 w-2.5 animate-spin" /> : null}
+            </p>
+          </div>
+          {!dvf ? null : dvf.transactions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Aucune mutation enregistrée dans un rayon de 40m sur les 5 dernières années.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {dvf.transactions.slice(0, 6).map((t) => (
+                <li key={t.id_mutation} className="rounded border border-border/50 bg-secondary/20 p-2 text-[10px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">
+                      {new Date(t.date_mutation).toLocaleDateString("fr-FR", { month: "short", year: "numeric" })}
+                    </span>
+                    <span className="text-primary font-bold">
+                      {t.valeur_fonciere ? `${t.valeur_fonciere.toLocaleString("fr-FR")} €` : "—"}
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    {t.nature_mutation} · {t.type_local}
+                    {t.surface_reelle_bati ? ` · ${t.surface_reelle_bati} m²` : ""}
+                    {t.prix_m2 ? ` · ${t.prix_m2.toLocaleString("fr-FR")} €/m²` : ""}
+                  </p>
+                </li>
+              ))}
+              {dvf.transactions.length > 6 ? (
+                <li className="text-[10px] text-muted-foreground">+ {dvf.transactions.length - 6} autres mutations…</li>
+              ) : null}
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] italic text-muted-foreground">
+            DVF (DGFiP, data.gouv) — acheteurs particuliers anonymisés (RGPD). Pour les SCI/foncières,
+            consulter Annuaire Entreprises avec le SIREN éventuel sur la mutation.
           </p>
         </section>
       </div>
