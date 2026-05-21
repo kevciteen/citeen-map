@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Building2,
   Building,
+  Briefcase,
   Home,
   Settings,
   FileDown,
@@ -27,6 +28,7 @@ const items = [
   { href: "/copros", label: "Copropriétés", icon: Building2 },
   { href: "/maisons", label: "Maisons individuelles", icon: Home },
   { href: "/appartements", label: "Appartements", icon: Building },
+  { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
   { href: "/syndics", label: "Syndics", icon: Users },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];

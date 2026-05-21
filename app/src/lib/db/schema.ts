@@ -69,6 +69,106 @@ export type PipelineStage =
   | "won"
   | "lost";
 
+// ============================================================
+// REFERENCE DATA — bâtiments tertiaires (DPE tertiaire ADEME, BDNB, saisie)
+// Périmètre : bureaux, commerces, hôtellerie/restauration, santé,
+// enseignement, autres secteurs (assujettis ou non au Décret Tertiaire).
+// ============================================================
+export type TertiarySource = "dpe-tertiaire" | "bdnb" | "manual" | "user";
+
+export type TertiarySector =
+  | "Bureaux"
+  | "Commerces"
+  | "Hotellerie / Restauration"
+  | "Sante"
+  | "Enseignement"
+  | "Autres secteurs";
+
+export const tertiaryBuildings = sqliteTable(
+  "tertiary_buildings",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    source: text("source").$type<TertiarySource>().notNull(),
+    // Identifiant externe (numero_dpe ADEME ou batiment_groupe_id BDNB)
+    externalId: text("external_id"),
+    label: text("label"),
+    adresse: text("adresse"),
+    codePostal: text("code_postal"),
+    commune: text("commune"),
+    codeInseeCommune: text("code_insee_commune"),
+    departement: text("departement"),
+    lat: real("lat"),
+    lon: real("lon"),
+    section: text("section"),
+    numeroParcelle: text("numero_parcelle"),
+    referenceCadastrale: text("reference_cadastrale"),
+    secteur: text("secteur").$type<TertiarySector>(),
+    typeUsage: text("type_usage"),
+    surfaceM2: real("surface_m2"),
+    anneeConstruction: integer("annee_construction"),
+    importedAt: integer("imported_at", { mode: "timestamp" }).default(
+      sql`(unixepoch())`,
+    ),
+  },
+  (t) => ({
+    tertBbox: index("idx_tertiary_bbox").on(t.lat, t.lon),
+    tertCp: index("idx_tertiary_cp").on(t.codePostal),
+    tertCommune: index("idx_tertiary_commune").on(t.commune),
+    tertDept: index("idx_tertiary_dept").on(t.departement),
+    tertSecteur: index("idx_tertiary_secteur").on(t.secteur),
+    tertSource: index("idx_tertiary_source").on(t.source, t.externalId),
+  }),
+);
+
+// DPE tertiaire (cache de la requête ADEME pour un bâtiment)
+export const tertiaryDpe = sqliteTable("tertiary_dpe", {
+  buildingId: integer("building_id")
+    .primaryKey()
+    .references(() => tertiaryBuildings.id, { onDelete: "cascade" }),
+  numeroDpe: text("numero_dpe"),
+  etiquetteDpe: text("etiquette_dpe"),     // A..G
+  etiquetteGes: text("etiquette_ges"),     // A..G
+  consoEnergiePrimaire: real("conso_energie_primaire"), // kWhep/m²/an
+  consoEnergieFinale: real("conso_energie_finale"),     // kWhef/m²/an
+  emissionsGes: real("emissions_ges"),                  // kg CO2/m²/an
+  surfaceUtile: real("surface_utile"),                  // m²
+  typeUsageDpe: text("type_usage_dpe"),    // Bureaux, Commerce, etc.
+  dateEtablissement: integer("date_etablissement", { mode: "timestamp" }),
+  dateModification: integer("date_modification", { mode: "timestamp" }),
+  cachedAt: integer("cached_at", { mode: "timestamp" }).default(
+    sql`(unixepoch())`,
+  ),
+});
+
+// Sociétés occupant le bâtiment (issues de Recherche d'entreprises / SIRENE)
+// On ne récupère pas le propriétaire foncier ici — voir notes module : il
+// faudrait DV3F / Cerema, non accessible sans convention.
+export const tertiaryOccupants = sqliteTable(
+  "tertiary_occupants",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    buildingId: integer("building_id")
+      .notNull()
+      .references(() => tertiaryBuildings.id, { onDelete: "cascade" }),
+    siret: text("siret"),
+    siren: text("siren"),
+    denomination: text("denomination"),
+    nafCode: text("naf_code"),
+    nafLabel: text("naf_label"),
+    trancheEffectif: text("tranche_effectif"),
+    adresseEnregistree: text("adresse_enregistree"),
+    estSiege: integer("est_siege", { mode: "boolean" }),
+    estActif: integer("est_actif", { mode: "boolean" }),
+    cachedAt: integer("cached_at", { mode: "timestamp" }).default(
+      sql`(unixepoch())`,
+    ),
+  },
+  (t) => ({
+    occBuilding: index("idx_occupants_building").on(t.buildingId),
+    occSiret: index("idx_occupants_siret").on(t.siret),
+  }),
+);
+
 export const prospects = sqliteTable(
   "prospects",
   {
@@ -76,6 +176,10 @@ export const prospects = sqliteTable(
     coproId: integer("copro_id").references(() => copros.id, {
       onDelete: "cascade",
     }),
+    tertiaryBuildingId: integer("tertiary_building_id").references(
+      () => tertiaryBuildings.id,
+      { onDelete: "cascade" },
+    ),
     // Le prospect peut aussi être une adresse libre (recherche Google sans copro)
     customLabel: text("custom_label"),
     customAddress: text("custom_address"),
@@ -99,6 +203,7 @@ export const prospects = sqliteTable(
   (t) => ({
     prospectStage: index("idx_prospects_stage").on(t.stage),
     prospectCopro: index("idx_prospects_copro").on(t.coproId),
+    prospectTertiary: index("idx_prospects_tertiary").on(t.tertiaryBuildingId),
     prospectNextAction: index("idx_prospects_next_action").on(t.nextActionAt),
   }),
 );
