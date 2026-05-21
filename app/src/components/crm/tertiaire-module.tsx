@@ -523,15 +523,20 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
     }
   }, [filterSecteur, filterDpe, filterCp, filterCommune, filterSurfaceMin, filterSurfaceMax, filterYearMin, filterYearMax, filterProprio]);
 
+  // La carte ne fetch PLUS automatiquement quand on bouge / zoom — uniquement
+  // sur clic du bouton "Rechercher". On garde la bbox à jour pour le prochain
+  // submit, mais on ne déclenche aucune requête.
   const onBoundsChange = useCallback((b: MapBounds) => {
     boundsRef.current = b;
-    if (reloadTimer.current) clearTimeout(reloadTimer.current);
-    reloadTimer.current = setTimeout(fetchPoints, 350);
-  }, [fetchPoints]);
+  }, []);
 
-  // Fetch initial au montage (utilise le DEFAULT_BBOX Paris) +
-  // re-fetch quand filtres changent.
-  useEffect(() => { fetchPoints(); }, [filterSecteur, filterDpe, filterCp, filterCommune, filterSurfaceMin, filterSurfaceMax, filterYearMin, filterYearMax, filterProprio]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Fetch initial UNE FOIS au montage (avec DEFAULT_BBOX Paris) pour amorcer.
+  const hasMounted = useRef(false);
+  useEffect(() => {
+    if (hasMounted.current) return;
+    hasMounted.current = true;
+    fetchPoints();
+  }, [fetchPoints]);
 
   return (
     <div className="flex h-full">
@@ -623,12 +628,21 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
           ) : null}
 
           <div className="mt-2 flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => fetchPoints()}
+              disabled={loading}
+              className="h-7 gap-1.5 text-xs"
+            >
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+              Rechercher
+            </Button>
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              {loading ? "Chargement…" : `${points.length} bâtiments`}
+              {points.length} bâtiments
             </span>
             {stats ? (
               <span
-                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                   stats.totalBuildings > 0
                     ? "bg-emerald-100 text-emerald-900"
                     : "bg-red-100 text-red-900"
@@ -638,16 +652,10 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
                 DB: {stats.totalBuildings.toLocaleString("fr-FR")}
               </span>
             ) : null}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => fetchPoints()}
-              className="ml-auto h-6 text-[10px]"
-              title="Recharger"
-            >
-              ⟳
-            </Button>
           </div>
+          <p className="mt-1 text-[10px] italic text-muted-foreground">
+            La carte ne se met à jour qu'au clic sur Rechercher (pas en bougeant/zoomant).
+          </p>
         </div>
 
         <TertiaireMap

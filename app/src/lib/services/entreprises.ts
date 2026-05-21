@@ -185,12 +185,12 @@ export async function searchEntreprisesAtAddress(opts: {
     }
   };
 
-  // Pass 1 : near_point si lat/lon
+  // Pass 1 : near_point si lat/lon — rayon 100m (la majorité des immeubles tertiaires)
   if (opts.lat && opts.lon && Number.isFinite(opts.lat) && Number.isFinite(opts.lon)) {
     const url = new URL("https://recherche-entreprises.api.gouv.fr/near_point");
     url.searchParams.set("lat", String(opts.lat));
     url.searchParams.set("long", String(opts.lon));
-    url.searchParams.set("radius", "0.05"); // 50m
+    url.searchParams.set("radius", "0.1"); // 100m
     url.searchParams.set("page", "1");
     url.searchParams.set("per_page", String(limit));
     url.searchParams.set("etat_administratif", "A");
@@ -211,9 +211,9 @@ export async function searchEntreprisesAtAddress(opts: {
     if (json) merge(mapResultsToOccupants(json));
   }
 
-  // Pass 3 : si toujours peu de résultats, essayer une variante "rue uniquement"
-  if (dedup.size < 3 && q) {
-    // Enlève le numéro initial pour élargir la recherche au niveau de la rue
+  // Pass 3 : variante "rue uniquement" (sans numéro) — capture les sociétés
+  // dont l'adresse SIRENE diffère légèrement (variantes typographiques).
+  if (q) {
     const sansNumero = q.replace(/^\d+\s*(bis|ter|quater)?\s*,?\s*/i, "").trim();
     if (sansNumero && sansNumero !== q && sansNumero.length >= 4) {
       const url = new URL(RE_BASE);
@@ -226,6 +226,20 @@ export async function searchEntreprisesAtAddress(opts: {
       const json = await safeFetch(url);
       if (json) merge(mapResultsToOccupants(json));
     }
+  }
+
+  // Pass 4 : si vraiment rien trouvé via near_point + texte, élargir à 250m
+  // (cas des adresses récentes/mal géocodées dans SIRENE)
+  if (dedup.size === 0 && opts.lat && opts.lon) {
+    const url = new URL("https://recherche-entreprises.api.gouv.fr/near_point");
+    url.searchParams.set("lat", String(opts.lat));
+    url.searchParams.set("long", String(opts.lon));
+    url.searchParams.set("radius", "0.25"); // 250m
+    url.searchParams.set("page", "1");
+    url.searchParams.set("per_page", String(limit));
+    url.searchParams.set("etat_administratif", "A");
+    const json = await safeFetch(url);
+    if (json) merge(mapResultsToOccupants(json));
   }
 
   const occupants = [...dedup.values()];
