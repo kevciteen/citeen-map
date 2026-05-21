@@ -363,18 +363,11 @@ export async function searchEntreprisesAtAddress(opts: {
 
   let occupants = [...dedup.values()];
 
-  // Filtre strict : ne garde que les sociétés dont l'adresse SIRENE matche
-  // précisément le numéro + nom de rue de la query.
+  // Filtre strict : ne garde QUE les sociétés dont l'adresse SIRENE matche
+  // précisément le numéro + nom de rue de la query. Si tout est exclu,
+  // on retourne [] (mieux qu'afficher 10 voisins qui prêtent à confusion).
   if (opts.strict !== false && q) {
-    const filtered = occupants.filter((o) => matchesAddressStrict(o.adresseEnregistree, q));
-    // Si le filtre strict élimine TOUT (cas d'adresses récentes ou mal indexées
-    // dans SIRENE), on garde le near_point en fallback (≤ 10 résultats les plus
-    // proches géographiquement).
-    if (filtered.length > 0) {
-      occupants = filtered;
-    } else {
-      occupants = occupants.slice(0, 10);
-    }
+    occupants = occupants.filter((o) => matchesAddressStrict(o.adresseEnregistree, q));
   }
 
   cacheSet(key, occupants, CACHE_TTL_MS);

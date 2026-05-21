@@ -314,9 +314,14 @@ export function TertiairePanel({
             </p>
           </div>
           {occupants.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              Aucun occupant enregistré. Clique sur Rafraîchir pour relancer la recherche SIRENE.
-            </p>
+            <div className="space-y-1 rounded border border-border/50 bg-secondary/20 p-2">
+              <p className="text-xs font-medium">Aucune société SIRENE à cette adresse exacte.</p>
+              <p className="text-[10px] text-muted-foreground">
+                Causes possibles : adresse résidentielle/industrielle non commerciale,
+                adresse récente pas encore indexée SIRENE, ou rue avec un nom historique
+                différent (ex: « ex Chemin Latéral »). Clique Rafraîchir pour re-essayer.
+              </p>
+            </div>
           ) : (
             <ul className="space-y-2">
               {occupants.slice(0, 15).map((o) => (
