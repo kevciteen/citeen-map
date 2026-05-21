@@ -1,0 +1,330 @@
+"use client";
+import { useEffect, useState } from "react";
+import {
+  Building2,
+  X,
+  Plus,
+  RefreshCw,
+  Users,
+  Zap,
+  Calculator,
+  Loader2,
+  CheckCircle2,
+  ExternalLink,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+
+type Building = {
+  id: number;
+  source: string;
+  external_id: string | null;
+  label: string | null;
+  adresse: string | null;
+  code_postal: string | null;
+  commune: string | null;
+  departement: string | null;
+  lat: number | null;
+  lon: number | null;
+  secteur: string | null;
+  type_usage: string | null;
+  surface_m2: number | null;
+  annee_construction: number | null;
+};
+
+type Dpe = {
+  numero_dpe: string | null;
+  etiquette_dpe: string | null;
+  etiquette_ges: string | null;
+  conso_energie_primaire: number | null;
+  conso_energie_finale: number | null;
+  emissions_ges: number | null;
+  surface_utile: number | null;
+  type_usage_dpe: string | null;
+  date_etablissement: number | null;
+};
+
+type Occupant = {
+  id: number;
+  siret: string | null;
+  siren: string | null;
+  denomination: string | null;
+  naf_code: string | null;
+  naf_label: string | null;
+  tranche_effectif: string | null;
+  est_siege: number | null;
+};
+
+type Detail = {
+  building: Building;
+  dpe: Dpe | null;
+  occupants: Occupant[];
+  occupantsCount: number;
+  prospect: { id: number; stage: string } | null;
+  ceeProject: {
+    buildingType: "Tertiaire";
+    sector: string;
+    postalCode: string | number;
+    constructionYear: string | number;
+    buildingSurface: string | number;
+  };
+};
+
+const DPE_COLORS: Record<string, string> = {
+  A: "bg-emerald-500 text-white",
+  B: "bg-lime-500 text-white",
+  C: "bg-yellow-400 text-stone-900",
+  D: "bg-amber-500 text-white",
+  E: "bg-orange-500 text-white",
+  F: "bg-red-500 text-white",
+  G: "bg-rose-700 text-white",
+};
+
+function DpeBadge({ value }: { value?: string | null }) {
+  if (!value) return <span className="text-xs text-muted-foreground">—</span>;
+  const color = DPE_COLORS[value.toUpperCase()] ?? "bg-stone-300";
+  return (
+    <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-bold ${color}`}>
+      {value.toUpperCase()}
+    </span>
+  );
+}
+
+export function TertiairePanel({
+  buildingId,
+  onClose,
+  onProspectCreated,
+  onSimulerCee,
+}: {
+  buildingId: number;
+  onClose: () => void;
+  onProspectCreated?: (prospectId: number) => void;
+  onSimulerCee?: (detail: Detail) => void;
+}) {
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const load = async (refresh = false) => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const res = await fetch(`/api/tertiaire/${buildingId}${refresh ? "?refresh=1" : ""}`);
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const json = (await res.json()) as Detail;
+      setDetail(json);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [buildingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const createProspect = async () => {
+    setCreating(true);
+    try {
+      const res = await fetch(`/api/tertiaire/${buildingId}/create-prospect`, { method: "POST" });
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const json = await res.json() as { prospect: { id: number; stage: string }; created: boolean };
+      toast.success(json.created ? "Prospect créé" : "Prospect existant rouvert");
+      onProspectCreated?.(json.prospect.id);
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <aside className="flex h-full w-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        Chargement de la fiche…
+      </aside>
+    );
+  }
+  if (!detail) {
+    return (
+      <aside className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+        Fiche introuvable.
+        <Button variant="outline" size="sm" onClick={onClose}>Fermer</Button>
+      </aside>
+    );
+  }
+
+  const { building, dpe, occupants, prospect } = detail;
+
+  return (
+    <aside className="flex h-full w-full flex-col overflow-hidden bg-card">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 border-b border-border p-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-primary" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Bâtiment tertiaire
+            </span>
+            {building.secteur ? (
+              <Badge variant="secondary" className="text-[10px]">{building.secteur}</Badge>
+            ) : null}
+          </div>
+          <h3 className="truncate text-base font-semibold">
+            {building.label ?? building.adresse ?? `#${building.id}`}
+          </h3>
+          {building.adresse && building.label !== building.adresse ? (
+            <p className="truncate text-xs text-muted-foreground">{building.adresse}</p>
+          ) : null}
+        </div>
+        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Fermer">
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-auto p-4">
+        {/* Actions principales */}
+        <div className="mb-4 flex flex-wrap gap-2">
+          {prospect ? (
+            <Badge className="gap-1.5 bg-emerald-100 text-emerald-900">
+              <CheckCircle2 className="h-3 w-3" />
+              Prospect ({prospect.stage})
+            </Badge>
+          ) : (
+            <Button size="sm" onClick={createProspect} disabled={creating} className="gap-1.5">
+              {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              Créer prospect
+            </Button>
+          )}
+          {onSimulerCee ? (
+            <Button size="sm" variant="secondary" onClick={() => onSimulerCee(detail)} className="gap-1.5">
+              <Calculator className="h-3.5 w-3.5" />
+              Simuler CEE
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => load(true)}
+            disabled={refreshing}
+            className="gap-1.5"
+          >
+            {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Rafraîchir
+          </Button>
+        </div>
+
+        {/* DPE bloc */}
+        <section className="mb-4 rounded-lg border border-border bg-secondary/30 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <Zap className="h-3.5 w-3.5 text-primary" />
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">DPE tertiaire</p>
+          </div>
+          {dpe?.etiquette_dpe || dpe?.etiquette_ges ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <DpeBadge value={dpe.etiquette_dpe} />
+                <span className="text-xs text-muted-foreground">DPE</span>
+                <DpeBadge value={dpe.etiquette_ges} />
+                <span className="text-xs text-muted-foreground">GES</span>
+              </div>
+              <dl className="space-y-0.5 text-xs">
+                {dpe.conso_energie_primaire ? <Row label="Conso EP" value={`${dpe.conso_energie_primaire.toLocaleString("fr-FR")} kWhEP/m²/an`} /> : null}
+                {dpe.emissions_ges ? <Row label="Émissions" value={`${dpe.emissions_ges.toLocaleString("fr-FR")} kgCO₂/m²/an`} /> : null}
+                {dpe.surface_utile ? <Row label="Surface DPE" value={`${dpe.surface_utile.toLocaleString("fr-FR")} m²`} /> : null}
+                {dpe.numero_dpe ? <Row label="N° DPE" value={dpe.numero_dpe} /> : null}
+              </dl>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Aucun DPE tertiaire enregistré pour ce bâtiment.</p>
+          )}
+        </section>
+
+        {/* Caractéristiques bâtiment */}
+        <section className="mb-4">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Bâtiment</p>
+          <dl className="space-y-0.5 text-xs">
+            {building.surface_m2 ? <Row label="Surface" value={`${building.surface_m2.toLocaleString("fr-FR")} m²`} /> : null}
+            {building.annee_construction ? <Row label="Année construction" value={String(building.annee_construction)} /> : null}
+            {building.type_usage ? <Row label="Usage" value={building.type_usage} /> : null}
+            {building.code_postal ? <Row label="Code postal" value={building.code_postal} /> : null}
+            {building.commune ? <Row label="Commune" value={building.commune} /> : null}
+            <Row label="Source" value={building.source} />
+          </dl>
+        </section>
+
+        <Separator className="my-3" />
+
+        {/* Occupants */}
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <Users className="h-3.5 w-3.5 text-primary" />
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Sociétés occupantes ({occupants.length})
+            </p>
+          </div>
+          {occupants.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Aucun occupant enregistré. Clique sur Rafraîchir pour relancer la recherche SIRENE.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {occupants.slice(0, 15).map((o) => (
+                <li key={o.id} className="rounded border border-border/50 bg-secondary/20 p-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold">
+                        {o.denomination ?? "(sans dénomination)"}
+                      </p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        SIRET {o.siret}
+                        {o.est_siege ? " · siège" : ""}
+                        {o.tranche_effectif ? ` · ${o.tranche_effectif}` : ""}
+                      </p>
+                      {o.naf_label ? (
+                        <p className="truncate text-[10px] text-muted-foreground">
+                          {o.naf_code} · {o.naf_label}
+                        </p>
+                      ) : null}
+                    </div>
+                    {o.siren ? (
+                      <a
+                        href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-primary"
+                        title="Voir sur Annuaire Entreprises"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+              {occupants.length > 15 ? (
+                <p className="text-[10px] text-muted-foreground">+ {occupants.length - 15} autres…</p>
+              ) : null}
+            </ul>
+          )}
+          <p className="mt-3 border-t border-border/50 pt-2 text-[10px] italic text-muted-foreground">
+            Propriétaire foncier : non disponible (DV3F / Fichiers fonciers Cerema sous convention).
+          </p>
+        </section>
+      </div>
+    </aside>
+  );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 py-0.5">
+      <dt className="w-36 shrink-0 text-[11px] text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words text-[11px]">{value}</dd>
+    </div>
+  );
+}

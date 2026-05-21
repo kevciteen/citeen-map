@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lookupTertiaireByAddress } from "@/lib/services/tertiaire";
 import { ensureAuth } from "@/lib/auth/guards";
+import { ensureTertiary } from "@/lib/db/ensure-tertiary";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -11,6 +12,7 @@ export async function GET(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
   const limited = await rateLimit("heavy", `user:${guard.id}`);
   if (limited) return limited;
+  await ensureTertiary();
 
   const q = req.nextUrl.searchParams.get("q")?.trim();
   if (!q || q.length < 5) {
