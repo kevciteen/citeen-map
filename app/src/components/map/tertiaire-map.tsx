@@ -50,12 +50,15 @@ export function TertiaireMap({
   onSelectBuilding,
   selectedId,
   initialCenter,
+  flyTo,
 }: {
   points: TertiairePoint[];
   onBoundsChange?: (b: MapBounds) => void;
   onSelectBuilding: (id: number) => void;
   selectedId?: number | null;
   initialCenter?: { lat: number; lon: number; zoom?: number };
+  /** Anime la carte vers ce point (utilisé pour la recherche d'adresse) */
+  flyTo?: { lat: number; lon: number; zoom?: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -209,6 +212,16 @@ export function TertiaireMap({
       }));
     source.setData({ type: "FeatureCollection", features });
   }, [points, selectedId, ready]);
+
+  // FlyTo : anime la carte vers un point (recherche d'adresse)
+  useEffect(() => {
+    if (!ready || !mapRef.current || !flyTo) return;
+    mapRef.current.flyTo({
+      center: [flyTo.lon, flyTo.lat],
+      zoom: flyTo.zoom ?? 17,
+      speed: 1.5,
+    });
+  }, [flyTo, ready]);
 
   return (
     <div className="relative h-full w-full">

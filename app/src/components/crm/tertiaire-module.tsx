@@ -15,6 +15,9 @@ import {
   ExternalLink,
   CheckCircle2,
   Database,
+  Phone,
+  Globe,
+  Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -205,6 +208,73 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
     }
   };
 
+  const [enrichingContacts, setEnrichingContacts] = useState(false);
+
+  const enrichContacts = async () => {
+    if (!result) return;
+    setEnrichingContacts(true);
+    try {
+      // 1. Sauvegarder le bâtiment si pas encore en DB (pour avoir un buildingId)
+      let buildingId = result.buildingId ?? savedBuildingId;
+      if (!buildingId) {
+        const saveRes = await fetch("/api/tertiaire/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(result),
+        });
+        if (!saveRes.ok) throw new Error(`save ${saveRes.status}`);
+        const sj = await saveRes.json() as { buildingId: number };
+        buildingId = sj.buildingId;
+        setSavedBuildingId(buildingId);
+      }
+
+      // 2. Enrichir les coordonnées de tous les occupants
+      const enrichRes = await fetch(`/api/tertiaire/${buildingId}/enrich-contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ onlyEmployers: false }),
+      });
+      if (!enrichRes.ok) throw new Error(`enrich ${enrichRes.status}`);
+      const ej = await enrichRes.json() as { enrichis: number; sans_contact: number; candidats: number };
+
+      // 3. Recharger la fiche pour récupérer occupants avec contacts
+      const detRes = await fetch(`/api/tertiaire/${buildingId}`);
+      if (detRes.ok) {
+        const det = await detRes.json() as {
+          occupants: Array<{
+            siret: string | null; siren: string | null; denomination: string | null;
+            naf_code: string | null; naf_label: string | null;
+            tranche_effectif: string | null; est_siege: number | null;
+            phone: string | null; website: string | null; email: string | null;
+          }>;
+        };
+        // Map vers le format LookupResult.occupants
+        setResult({
+          ...result,
+          occupants: det.occupants.map((o) => ({
+            siret: o.siret ?? "",
+            siren: o.siren ?? "",
+            denomination: o.denomination,
+            nafCode: o.naf_code,
+            nafLabel: o.naf_label,
+            trancheEffectif: o.tranche_effectif,
+            estSiege: Boolean(o.est_siege),
+            estActif: true,
+            // Champs contacts (cast)
+            ...(o.phone || o.website || o.email
+              ? { phone: o.phone, website: o.website, email: o.email }
+              : {}),
+          })) as LookupResult["occupants"],
+        });
+      }
+      toast.success(`${ej.enrichis}/${ej.candidats} sociétés enrichies`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setEnrichingContacts(false);
+    }
+  };
+
   const simulerCee = () => {
     if (!result) return;
     const surface = result.bdnb?.surfaceUtileTertiaire ?? (Number(result.dpeTertiaire?.surface_utile ?? 0) || null);
@@ -267,6 +337,17 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
             <Button size="sm" variant="secondary" onClick={simulerCee} className="gap-1.5">
               <Calculator className="h-3.5 w-3.5" />
               Simuler CEE
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={enrichContacts}
+              disabled={enrichingContacts}
+              className="gap-1.5"
+              title="Récupère téléphone + site web de chaque société via OSM + Google Places (sauvegarde le bâtiment au passage)"
+            >
+              {enrichingContacts ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Phone className="h-3.5 w-3.5" />}
+              Coordonnées
             </Button>
             {result.buildingId ? (
               <Badge variant="secondary" className="gap-1.5 text-[10px]">
@@ -412,6 +493,10 @@ type OccupantSearch = {
   trancheEffectif: string | null;
   estSiege: boolean;
   estActif: boolean;
+  // Coordonnées (présentes après enrichissement OSM + Google)
+  phone?: string | null;
+  website?: string | null;
+  email?: string | null;
 };
 
 const EFFECTIF_ORDER: Record<string, number> = {
@@ -458,6 +543,25 @@ function OccupantRow({ o, accent }: { o: OccupantSearch; accent: "real" | "domic
             <p className="truncate text-[11px] text-muted-foreground">
               {o.nafCode} · {o.nafLabel}
             </p>
+          ) : null}
+          {(o.phone || o.website || o.email) ? (
+            <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
+              {o.phone ? (
+                <a href={`tel:${o.phone}`} className="flex items-center gap-1 text-blue-700 hover:underline">
+                  <Phone className="h-2.5 w-2.5" /> {o.phone}
+                </a>
+              ) : null}
+              {o.website ? (
+                <a href={o.website.startsWith("http") ? o.website : `https://${o.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-700 hover:underline">
+                  <Globe className="h-2.5 w-2.5" /> Site web
+                </a>
+              ) : null}
+              {o.email ? (
+                <a href={`mailto:${o.email}`} className="flex items-center gap-1 text-blue-700 hover:underline">
+                  <Mail className="h-2.5 w-2.5" /> {o.email}
+                </a>
+              ) : null}
+            </div>
           ) : null}
         </div>
         {o.siren ? (
@@ -597,6 +701,8 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
   const [filterYearMax, setFilterYearMax] = useState<string>("");
   const [filterProprio, setFilterProprio] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [addressQuery, setAddressQuery] = useState<string>("");
+  const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
   // Pré-initialisé pour que le 1er fetch fonctionne même si MapLibre tarde
   const boundsRef = useRef<MapBounds>(DEFAULT_BBOX);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -667,6 +773,22 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
       <div className="relative flex-1">
         {/* Toolbar filtres (avancés affichables) */}
         <div className="absolute left-3 top-3 z-10 w-[400px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card/95 p-3 shadow-md backdrop-blur">
+          {/* Recherche d'adresse avec autocomplete BAN — zoom + flyTo */}
+          <div className="mb-2">
+            <AddressAutocomplete
+              value={addressQuery}
+              onChange={setAddressQuery}
+              onSelect={(s) => {
+                setFlyTo({ lat: s.lat, lon: s.lon, zoom: 17 });
+                // Pré-remplir CP/commune pour cibler les markers
+                if (s.postcode) setFilterCp(s.postcode);
+                // Déclenche un fetch dans la zone après le flyTo
+                setTimeout(() => fetchPoints(), 800);
+              }}
+              placeholder="🔍 Aller à une adresse…"
+            />
+          </div>
+
           <div className="mb-2 flex items-center gap-2">
             <select
               value={filterSecteur}
@@ -787,6 +909,7 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
           onBoundsChange={onBoundsChange}
           onSelectBuilding={setSelectedId}
           selectedId={selectedId}
+          flyTo={flyTo}
         />
 
         {error ? (
