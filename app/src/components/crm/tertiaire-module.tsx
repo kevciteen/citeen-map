@@ -465,6 +465,14 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filterSecteur, setFilterSecteur] = useState<string>("");
   const [filterDpe, setFilterDpe] = useState<string>("");
+  const [filterCp, setFilterCp] = useState<string>("");
+  const [filterCommune, setFilterCommune] = useState<string>("");
+  const [filterSurfaceMin, setFilterSurfaceMin] = useState<string>("");
+  const [filterSurfaceMax, setFilterSurfaceMax] = useState<string>("");
+  const [filterYearMin, setFilterYearMin] = useState<string>("");
+  const [filterYearMax, setFilterYearMax] = useState<string>("");
+  const [filterProprio, setFilterProprio] = useState<string>("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   // Pré-initialisé pour que le 1er fetch fonctionne même si MapLibre tarde
   const boundsRef = useRef<MapBounds>(DEFAULT_BBOX);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -480,15 +488,26 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
 
   const fetchPoints = useCallback(async () => {
     const b = boundsRef.current;
-    if (b.zoom < ZOOM_MIN) { setPoints([]); return; }
+    // Si filtres CP/commune actifs → on ignore le bbox (recherche globale)
+    const hasZoneFilter = Boolean(filterCp || filterCommune || filterProprio);
+    if (!hasZoneFilter && b.zoom < ZOOM_MIN) { setPoints([]); return; }
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
-      params.set("bbox", `${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`);
+      if (!hasZoneFilter) {
+        params.set("bbox", `${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`);
+      }
       if (filterSecteur) params.set("secteur", filterSecteur);
       if (filterDpe) params.set("dpe", filterDpe);
-      params.set("limit", "3000");
+      if (filterCp) params.set("cp", filterCp);
+      if (filterCommune) params.set("commune", filterCommune);
+      if (filterSurfaceMin) params.set("surfaceMin", filterSurfaceMin);
+      if (filterSurfaceMax) params.set("surfaceMax", filterSurfaceMax);
+      if (filterYearMin) params.set("yearMin", filterYearMin);
+      if (filterYearMax) params.set("yearMax", filterYearMax);
+      if (filterProprio) params.set("proprietaire", filterProprio);
+      params.set("limit", "5000");
       const res = await fetch(`/api/tertiaire/list?${params.toString()}`);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -502,7 +521,7 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
     } finally {
       setLoading(false);
     }
-  }, [filterSecteur, filterDpe]);
+  }, [filterSecteur, filterDpe, filterCp, filterCommune, filterSurfaceMin, filterSurfaceMax, filterYearMin, filterYearMax, filterProprio]);
 
   const onBoundsChange = useCallback((b: MapBounds) => {
     boundsRef.current = b;
@@ -512,55 +531,123 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
 
   // Fetch initial au montage (utilise le DEFAULT_BBOX Paris) +
   // re-fetch quand filtres changent.
-  useEffect(() => { fetchPoints(); }, [filterSecteur, filterDpe]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchPoints(); }, [filterSecteur, filterDpe, filterCp, filterCommune, filterSurfaceMin, filterSurfaceMax, filterYearMin, filterYearMax, filterProprio]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full">
       <div className="relative flex-1">
-        {/* Toolbar filtres */}
-        <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-border bg-card/95 p-2 shadow-md backdrop-blur">
-          <select
-            value={filterSecteur}
-            onChange={(e) => setFilterSecteur(e.target.value)}
-            className="rounded-md border border-input bg-background px-2 py-1 text-xs"
-          >
-            <option value="">Tous secteurs</option>
-            {SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select
-            value={filterDpe}
-            onChange={(e) => setFilterDpe(e.target.value)}
-            className="rounded-md border border-input bg-background px-2 py-1 text-xs"
-          >
-            <option value="">Toutes classes DPE</option>
-            {DPE_CLASSES.map((c) => <option key={c} value={c}>Classe {c}</option>)}
-            <option value="FG">F + G (passoires)</option>
-            <option value="DEFG">D à G</option>
-          </select>
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            {loading ? "Chargement…" : `${points.length} bâtiments`}
-          </span>
-          {stats ? (
-            <span
-              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                stats.totalBuildings > 0
-                  ? "bg-emerald-100 text-emerald-900"
-                  : "bg-red-100 text-red-900"
-              }`}
-              title={`Turso URL ${stats.db.tursoUrlSet ? "set" : "MISSING"}${stats.db.tursoUrlPrefix ? ` (${stats.db.tursoUrlPrefix}…)` : ""}`}
+        {/* Toolbar filtres (avancés affichables) */}
+        <div className="absolute left-3 top-3 z-10 w-[400px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card/95 p-3 shadow-md backdrop-blur">
+          <div className="mb-2 flex items-center gap-2">
+            <select
+              value={filterSecteur}
+              onChange={(e) => setFilterSecteur(e.target.value)}
+              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs"
             >
-              DB: {stats.totalBuildings.toLocaleString("fr-FR")}
-            </span>
+              <option value="">Tous secteurs</option>
+              {SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select
+              value={filterDpe}
+              onChange={(e) => setFilterDpe(e.target.value)}
+              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs"
+            >
+              <option value="">Toutes classes DPE</option>
+              {DPE_CLASSES.map((c) => <option key={c} value={c}>Classe {c}</option>)}
+              <option value="FG">F + G (passoires)</option>
+              <option value="DEFG">D à G</option>
+            </select>
+            <button
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="rounded-md border border-input bg-background px-2 py-1 text-[10px] hover:bg-secondary"
+            >
+              {showAdvanced ? "Moins" : "Filtres avancés"}
+            </button>
+          </div>
+
+          {showAdvanced ? (
+            <div className="space-y-2 border-t border-border/50 pt-2">
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={filterCp}
+                  onChange={(e) => setFilterCp(e.target.value)}
+                  placeholder="Code postal"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+                <input
+                  value={filterCommune}
+                  onChange={(e) => setFilterCommune(e.target.value)}
+                  placeholder="Commune"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={filterSurfaceMin}
+                  onChange={(e) => setFilterSurfaceMin(e.target.value)}
+                  placeholder="Surface min m²"
+                  type="number"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+                <input
+                  value={filterSurfaceMax}
+                  onChange={(e) => setFilterSurfaceMax(e.target.value)}
+                  placeholder="Surface max m²"
+                  type="number"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={filterYearMin}
+                  onChange={(e) => setFilterYearMin(e.target.value)}
+                  placeholder="Année min"
+                  type="number"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+                <input
+                  value={filterYearMax}
+                  onChange={(e) => setFilterYearMax(e.target.value)}
+                  placeholder="Année max"
+                  type="number"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                />
+              </div>
+              <input
+                value={filterProprio}
+                onChange={(e) => setFilterProprio(e.target.value)}
+                placeholder="Occupant / société (nom)"
+                className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
+              />
+            </div>
           ) : null}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => fetchPoints()}
-            className="h-6 text-[10px]"
-            title="Recharger la zone visible"
-          >
-            ⟳
-          </Button>
+
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {loading ? "Chargement…" : `${points.length} bâtiments`}
+            </span>
+            {stats ? (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                  stats.totalBuildings > 0
+                    ? "bg-emerald-100 text-emerald-900"
+                    : "bg-red-100 text-red-900"
+                }`}
+                title={`Turso URL ${stats.db.tursoUrlSet ? "set" : "MISSING"}${stats.db.tursoUrlPrefix ? ` (${stats.db.tursoUrlPrefix}…)` : ""}`}
+              >
+                DB: {stats.totalBuildings.toLocaleString("fr-FR")}
+              </span>
+            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => fetchPoints()}
+              className="ml-auto h-6 text-[10px]"
+              title="Recharger"
+            >
+              ⟳
+            </Button>
+          </div>
         </div>
 
         <TertiaireMap

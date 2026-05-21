@@ -194,6 +194,8 @@ export async function lookupTertiaireByAddress(query: string): Promise<Tertiaire
       q,
       codeInsee: geo.citycode,
       codePostal: geo.postcode,
+      lat: geo.lat,
+      lon: geo.lon,
       limit: 50,
     }), [] as EntrepriseAtAddress[]),
   ]);

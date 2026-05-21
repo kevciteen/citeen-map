@@ -136,50 +136,99 @@ function mapResultsToOccupants(json: RawResponse): EntrepriseAtAddress[] {
 /**
  * Cherche les sociétés actives à une adresse donnée.
  *
- * @param opts.q chaîne libre (ex: "1 place de la Défense 92800")
- * @param opts.codeInsee filtre commune si fourni (recommandé pour réduire le bruit)
- * @param opts.limit max résultats (défaut 25, max 100)
+ * Stratégie multi-passe pour maximiser le rappel :
+ *   1. Si lat/lon dispo → /near_point (rayon 50m) — le plus fiable
+ *   2. Recherche par adresse complète (q) avec filtre code_commune
+ *   3. Recherche par nom de rue + numéro avec filtre commune
+ *
+ * Déduplique par SIRET à la fin.
  */
 export async function searchEntreprisesAtAddress(opts: {
   q: string;
   codeInsee?: string;
   codePostal?: string;
+  lat?: number;
+  lon?: number;
   limit?: number;
 }): Promise<EntrepriseAtAddress[]> {
   const q = opts.q?.trim();
-  if (!q) return [];
-  const limit = Math.min(opts.limit ?? 25, 100);
+  if (!q && !(opts.lat && opts.lon)) return [];
+  const limit = Math.min(opts.limit ?? 50, 100);
 
-  const key = `recherche-entreprises:${q}|${opts.codeInsee ?? ""}|${opts.codePostal ?? ""}|${limit}`;
+  const key = `recherche-entreprises:${q}|${opts.codeInsee ?? ""}|${opts.codePostal ?? ""}|${opts.lat ?? ""}|${opts.lon ?? ""}|${limit}`;
   const hit = cacheGet<EntrepriseAtAddress[]>(key);
   if (hit) return hit;
 
-  const url = new URL(RE_BASE);
-  url.searchParams.set("q", q);
-  url.searchParams.set("page", "1");
-  url.searchParams.set("per_page", String(limit));
-  url.searchParams.set("etat_administratif", "A");
-  if (opts.codeInsee) url.searchParams.set("code_commune", opts.codeInsee);
-  if (opts.codePostal) url.searchParams.set("code_postal", opts.codePostal);
+  const dedup = new Map<string, EntrepriseAtAddress>();
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQ_TIMEOUT_MS);
-    const res = await fetch(url, {
-      headers: { accept: "application/json" },
-      next: { revalidate: 24 * 3600 },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (!res.ok) {
-      cacheSet(key, [], 60 * 60 * 1000);
-      return [];
+  const merge = (list: EntrepriseAtAddress[]) => {
+    for (const e of list) {
+      const id = e.siret || e.siren;
+      if (id && !dedup.has(id)) dedup.set(id, e);
     }
-    const json = (await res.json()) as RawResponse;
-    const occupants = mapResultsToOccupants(json);
-    cacheSet(key, occupants, CACHE_TTL_MS);
-    return occupants;
-  } catch {
-    return [];
+  };
+
+  const safeFetch = async (url: URL): Promise<RawResponse | null> => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQ_TIMEOUT_MS);
+      const res = await fetch(url, {
+        headers: { accept: "application/json" },
+        next: { revalidate: 24 * 3600 },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) return null;
+      return (await res.json()) as RawResponse;
+    } catch {
+      return null;
+    }
+  };
+
+  // Pass 1 : near_point si lat/lon
+  if (opts.lat && opts.lon && Number.isFinite(opts.lat) && Number.isFinite(opts.lon)) {
+    const url = new URL("https://recherche-entreprises.api.gouv.fr/near_point");
+    url.searchParams.set("lat", String(opts.lat));
+    url.searchParams.set("long", String(opts.lon));
+    url.searchParams.set("radius", "0.05"); // 50m
+    url.searchParams.set("page", "1");
+    url.searchParams.set("per_page", String(limit));
+    url.searchParams.set("etat_administratif", "A");
+    const json = await safeFetch(url);
+    if (json) merge(mapResultsToOccupants(json));
   }
+
+  // Pass 2 : recherche texte par adresse complète
+  if (q) {
+    const url = new URL(RE_BASE);
+    url.searchParams.set("q", q);
+    url.searchParams.set("page", "1");
+    url.searchParams.set("per_page", String(limit));
+    url.searchParams.set("etat_administratif", "A");
+    if (opts.codeInsee) url.searchParams.set("code_commune", opts.codeInsee);
+    if (opts.codePostal) url.searchParams.set("code_postal", opts.codePostal);
+    const json = await safeFetch(url);
+    if (json) merge(mapResultsToOccupants(json));
+  }
+
+  // Pass 3 : si toujours peu de résultats, essayer une variante "rue uniquement"
+  if (dedup.size < 3 && q) {
+    // Enlève le numéro initial pour élargir la recherche au niveau de la rue
+    const sansNumero = q.replace(/^\d+\s*(bis|ter|quater)?\s*,?\s*/i, "").trim();
+    if (sansNumero && sansNumero !== q && sansNumero.length >= 4) {
+      const url = new URL(RE_BASE);
+      url.searchParams.set("q", sansNumero);
+      url.searchParams.set("page", "1");
+      url.searchParams.set("per_page", String(limit));
+      url.searchParams.set("etat_administratif", "A");
+      if (opts.codeInsee) url.searchParams.set("code_commune", opts.codeInsee);
+      if (opts.codePostal) url.searchParams.set("code_postal", opts.codePostal);
+      const json = await safeFetch(url);
+      if (json) merge(mapResultsToOccupants(json));
+    }
+  }
+
+  const occupants = [...dedup.values()];
+  cacheSet(key, occupants, CACHE_TTL_MS);
+  return occupants;
 }

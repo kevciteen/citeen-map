@@ -94,11 +94,13 @@ export async function GET(
   );
 
   if (refresh || occupants.length === 0) {
-    if (building.adresse) {
+    if (building.adresse || (building.lat && building.lon)) {
       const fresh = await searchEntreprisesAtAddress({
-        q: building.adresse,
+        q: building.adresse ?? "",
         codeInsee: building.code_insee_commune ?? undefined,
         codePostal: building.code_postal ?? undefined,
+        lat: building.lat ?? undefined,
+        lon: building.lon ?? undefined,
         limit: 50,
       });
       // Re-persiste : delete + insert (avec dirigeants en JSON)
