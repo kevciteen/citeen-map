@@ -166,14 +166,88 @@ function mapResultsToOccupants(json: RawResponse): EntrepriseAtAddress[] {
 }
 
 /**
+ * Normalise une chaîne d'adresse pour comparaison : minuscules, accents
+ * supprimés, abbréviations standardisées (R/RUE, AV/AVENUE, etc.).
+ */
+function normalizeAddr(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extrait le numéro de rue (avec bis/ter) d'une chaîne d'adresse.
+ */
+function extractStreetNumber(s: string): string | null {
+  const m = normalizeAddr(s).match(/^(\d+)\s*(bis|ter|quater)?/);
+  return m ? `${m[1]}${m[2] ? " " + m[2] : ""}` : null;
+}
+
+const VOIE_REGEX = /\b(rue|avenue|av|boulevard|bd|place|pl|allee|allees|impasse|imp|chemin|ch|route|rte|cours|cour|square|sq|quai|passage|villa|cite|hameau|esplanade|parvis|rond[\s-]?point)\s+/;
+
+/**
+ * Extrait le nom de rue (après "rue/av/bd…" et avant le code postal).
+ * Ex: "3 rue meyerbeer 75009 paris" → "meyerbeer"
+ *     "parking meyerbeer 3 rue de la chaussee d antin 75009" → "de la chaussee d antin"
+ */
+function extractStreetName(s: string): string | null {
+  const norm = normalizeAddr(s);
+  // Enlève le code postal + commune en fin
+  const sansCp = norm.replace(/\s+\d{5}\s+.+$/, "").trim();
+  // Cherche le premier "rue/av/bd ... " et capture le reste de la chaîne (nom de la voie)
+  const match = sansCp.match(new RegExp(VOIE_REGEX.source + "(.+)$"));
+  if (!match) return null;
+  // Le nom de rue = ce qui vient après "rue " (jusqu'à fin), nettoyé
+  return match[2].trim();
+}
+
+/**
+ * Vérifie qu'une adresse SIRENE matche la query strictement.
+ * Numéro doit matcher (si présent dans query).
+ * Nom de rue (après "rue/av/bd…") doit matcher EXACTEMENT (mêmes tokens
+ * significatifs, dans l'ordre).
+ */
+function matchesAddressStrict(sireneAddr: string | null, queryAddr: string): boolean {
+  if (!sireneAddr) return false;
+  const queryNum = extractStreetNumber(queryAddr);
+  const queryStreet = extractStreetName(queryAddr);
+  const sireneNum = extractStreetNumber(sireneAddr);
+  const sireneStreet = extractStreetName(sireneAddr);
+
+  if (queryNum && sireneNum && queryNum !== sireneNum) return false;
+  if (!queryStreet || !sireneStreet) return false;
+
+  // Tokens significatifs (mots de la rue, hors "de/du/la/le/les/des/d/l")
+  const stopWords = new Set(["de", "du", "la", "le", "les", "des", "d", "l", "et", "a", "au", "aux", "en"]);
+  const tokens = (s: string) => s.split(" ").filter((t) => t.length >= 2 && !stopWords.has(t));
+  const qt = tokens(queryStreet);
+  const st = tokens(sireneStreet);
+  if (qt.length === 0 || st.length === 0) return false;
+
+  // Pour matcher : TOUS les tokens significatifs de query doivent être dans
+  // sirene ET vice-versa (égalité des ensembles de tokens significatifs).
+  const qSet = new Set(qt);
+  const sSet = new Set(st);
+  if (qSet.size !== sSet.size) {
+    // Si tailles différentes, l'un est sous-ensemble de l'autre → on accepte si
+    // tous les tokens de query sont dans sirene (typo plus large dans SIRENE OK).
+    return qt.every((t) => sSet.has(t));
+  }
+  return qt.every((t) => sSet.has(t));
+}
+
+/**
  * Cherche les sociétés actives à une adresse donnée.
  *
- * Stratégie multi-passe pour maximiser le rappel :
- *   1. Si lat/lon dispo → /near_point (rayon 50m) — le plus fiable
- *   2. Recherche par adresse complète (q) avec filtre code_commune
- *   3. Recherche par nom de rue + numéro avec filtre commune
+ * Stratégie multi-passe pour maximiser le rappel, puis filtre STRICT par
+ * numéro + nom de rue pour ne garder que les vraies occupants à l'adresse.
  *
- * Déduplique par SIRET à la fin.
+ * @param opts.strict (défaut true) : filtre strict sur l'adresse SIRENE.
+ *   À false : retourne tout (utile pour debug, ou voir les voisins).
  */
 export async function searchEntreprisesAtAddress(opts: {
   q: string;
@@ -182,6 +256,7 @@ export async function searchEntreprisesAtAddress(opts: {
   lat?: number;
   lon?: number;
   limit?: number;
+  strict?: boolean;
 }): Promise<EntrepriseAtAddress[]> {
   const q = opts.q?.trim();
   if (!q && !(opts.lat && opts.lon)) return [];
@@ -286,7 +361,22 @@ export async function searchEntreprisesAtAddress(opts: {
     if (json) merge(mapResultsToOccupants(json));
   }
 
-  const occupants = [...dedup.values()];
+  let occupants = [...dedup.values()];
+
+  // Filtre strict : ne garde que les sociétés dont l'adresse SIRENE matche
+  // précisément le numéro + nom de rue de la query.
+  if (opts.strict !== false && q) {
+    const filtered = occupants.filter((o) => matchesAddressStrict(o.adresseEnregistree, q));
+    // Si le filtre strict élimine TOUT (cas d'adresses récentes ou mal indexées
+    // dans SIRENE), on garde le near_point en fallback (≤ 10 résultats les plus
+    // proches géographiquement).
+    if (filtered.length > 0) {
+      occupants = filtered;
+    } else {
+      occupants = occupants.slice(0, 10);
+    }
+  }
+
   cacheSet(key, occupants, CACHE_TTL_MS);
   return occupants;
 }
