@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import type { InValue } from "@libsql/client";
 import { ensureAuth } from "@/lib/auth/guards";
+import { ensureCoprosCoords } from "@/lib/db/ensure-copros-coords";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,8 @@ type CoproRow = {
   periode_construction: string | null;
   lat: number | null;
   lon: number | null;
+  coords_source: string | null;
+  coords_score: number | null;
   classe_finale: string | null;
 };
 
@@ -31,6 +34,7 @@ function num(v: string | null): number | null {
 export async function GET(req: NextRequest) {
   const guard = await ensureAuth();
   if (guard instanceof NextResponse) return guard;
+  await ensureCoprosCoords();
   const sp = req.nextUrl.searchParams;
   const minLat = num(sp.get("minLat"));
   const maxLat = num(sp.get("maxLat"));
@@ -102,7 +106,7 @@ export async function GET(req: NextRequest) {
     SELECT c.id, c.numero_immatriculation, c.nom_copro, c.adresse, c.code_postal,
            c.commune, c.departement, c.syndic,
            c.nb_lots, c.nb_lots_habitation, c.periode_construction,
-           c.lat, c.lon,
+           c.lat, c.lon, c.coords_source, c.coords_score,
            e.classe_finale
     FROM copros c
     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
