@@ -12,6 +12,14 @@ export type SyndicContactRecord = {
   address_override: string | null;
   notes: string | null;
   sirene_json: string | null;
+  auto_phone: string | null;
+  auto_website: string | null;
+  auto_email: string | null;
+  auto_hours: string | null;
+  auto_source: string | null;
+  auto_lat: number | null;
+  auto_lon: number | null;
+  auto_fetched_at: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -47,6 +55,16 @@ export type SyndicFullDetail = {
     website: string | null;
     address_override: string | null;
     notes: string | null;
+  };
+  auto: {
+    phone: string | null;
+    website: string | null;
+    email: string | null;
+    hours: string | null;
+    source: string | null;
+    lat: number | null;
+    lon: number | null;
+    fetched_at: number | null;
   };
 };
 
@@ -204,6 +222,16 @@ export async function getSyndicFullDetail(
       website: stored?.website ?? null,
       address_override: stored?.address_override ?? null,
       notes: stored?.notes ?? null,
+    },
+    auto: {
+      phone: stored?.auto_phone ?? null,
+      website: stored?.auto_website ?? null,
+      email: stored?.auto_email ?? null,
+      hours: stored?.auto_hours ?? null,
+      source: stored?.auto_source ?? null,
+      lat: stored?.auto_lat ?? null,
+      lon: stored?.auto_lon ?? null,
+      fetched_at: stored?.auto_fetched_at ?? null,
     },
   };
 }

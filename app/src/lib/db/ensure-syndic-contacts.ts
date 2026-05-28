@@ -27,6 +27,28 @@ export async function ensureSyndicContactsTable(): Promise<void> {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  // ALTER idempotent : colonnes d'enrichissement automatique OSM/Google.
+  // Séparées des colonnes éditables pour ne PAS écraser le travail manuel
+  // au re-fetch.
+  const cols = await db.all<{ name: string }>(`PRAGMA table_info(syndic_contacts)`);
+  const colSet = new Set(cols.map((c) => c.name));
+  const additions: Array<[string, string]> = [
+    ["auto_phone", "TEXT"],
+    ["auto_website", "TEXT"],
+    ["auto_email", "TEXT"],
+    ["auto_hours", "TEXT"],
+    ["auto_source", "TEXT"],
+    ["auto_lat", "REAL"],
+    ["auto_lon", "REAL"],
+    ["auto_fetched_at", "INTEGER"],
+  ];
+  for (const [name, type] of additions) {
+    if (!colSet.has(name)) {
+      await db.exec(`ALTER TABLE syndic_contacts ADD COLUMN ${name} ${type}`);
+    }
+  }
+
   ensured = true;
 }
 
