@@ -10,12 +10,14 @@
  *
  * Cache TTL : 7 jours (les coordonnées changent rarement).
  */
-import { cacheGet, cacheSet } from "./cache";
+import { getCachedContact, setCachedContact } from "./contact-cache";
+import { recordGooglePlacesCall } from "./google-quota";
 
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const GOOGLE_FIND_URL = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json";
 const GOOGLE_DETAILS_URL = "https://maps.googleapis.com/maps/api/place/details/json";
-const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
+const POSITIVE_TTL_MS = 7 * 24 * 3600 * 1000;
+const NEGATIVE_TTL_MS = 60 * 60 * 1000;
 const TIMEOUT_MS = 12000;
 
 export type ContactInfo = {
@@ -66,8 +68,8 @@ async function findOsmContact(opts: {
   const { lat, lon, denomination } = opts;
   const radius = opts.radiusM ?? 40;
   const key = `osm-contact:${lat.toFixed(5)}:${lon.toFixed(5)}:${normName(denomination)}`;
-  const hit = cacheGet<Partial<ContactInfo> | null>(key);
-  if (hit !== null) return hit;
+  const cached = await getCachedContact<Partial<ContactInfo> | null>(key);
+  if (cached) return cached.payload;
 
   // Overpass query : POI taggés avec phone, website, email, dans le rayon
   const query = `[out:json][timeout:12];
@@ -88,7 +90,7 @@ out tags center;`;
     });
     clearTimeout(t);
     if (!res.ok) {
-      cacheSet(key, null, 60 * 60 * 1000);
+      await setCachedContact(key, null, "osm-error", NEGATIVE_TTL_MS);
       return null;
     }
     const json = (await res.json()) as { elements?: OsmElement[] };
@@ -116,7 +118,7 @@ out tags center;`;
     }
 
     if (!pick) {
-      cacheSet(key, null, CACHE_TTL_MS);
+      await setCachedContact(key, null, "osm", POSITIVE_TTL_MS);
       return null;
     }
     const t2 = pick.tags ?? {};
@@ -126,7 +128,7 @@ out tags center;`;
       email: t2.email ?? t2["contact:email"] ?? null,
       hours: t2.opening_hours ?? null,
     };
-    cacheSet(key, result, CACHE_TTL_MS);
+    await setCachedContact(key, result, "osm", POSITIVE_TTL_MS);
     return result;
   } catch {
     return null;
@@ -142,8 +144,8 @@ async function findGoogleContact(opts: {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) return null;
   const key = `google-contact:${normName(opts.denomination)}|${normName(opts.address)}`;
-  const hit = cacheGet<Partial<ContactInfo> | null>(key);
-  if (hit !== null) return hit;
+  const cached = await getCachedContact<Partial<ContactInfo> | null>(key);
+  if (cached) return cached.payload;
 
   try {
     // 1. Find Place from Text → place_id
@@ -154,14 +156,15 @@ async function findGoogleContact(opts: {
     findUrl.searchParams.set("language", "fr");
     findUrl.searchParams.set("key", apiKey);
     const findRes = await fetch(findUrl, { next: { revalidate: 7 * 24 * 3600 } });
+    await recordGooglePlacesCall("find");
     if (!findRes.ok) {
-      cacheSet(key, null, 60 * 60 * 1000);
+      await setCachedContact(key, null, "google-error", NEGATIVE_TTL_MS);
       return null;
     }
     const findJson = (await findRes.json()) as { candidates?: Array<{ place_id: string }>; status?: string };
     const placeId = findJson.candidates?.[0]?.place_id;
     if (!placeId) {
-      cacheSet(key, null, CACHE_TTL_MS);
+      await setCachedContact(key, null, "google", POSITIVE_TTL_MS);
       return null;
     }
 
@@ -172,8 +175,9 @@ async function findGoogleContact(opts: {
     detailsUrl.searchParams.set("language", "fr");
     detailsUrl.searchParams.set("key", apiKey);
     const detRes = await fetch(detailsUrl, { next: { revalidate: 7 * 24 * 3600 } });
+    await recordGooglePlacesCall("details");
     if (!detRes.ok) {
-      cacheSet(key, null, 60 * 60 * 1000);
+      await setCachedContact(key, null, "google-error", NEGATIVE_TTL_MS);
       return null;
     }
     const detJson = (await detRes.json()) as {
@@ -186,7 +190,7 @@ async function findGoogleContact(opts: {
     };
     const r = detJson.result;
     if (!r) {
-      cacheSet(key, null, CACHE_TTL_MS);
+      await setCachedContact(key, null, "google", POSITIVE_TTL_MS);
       return null;
     }
     const result: Partial<ContactInfo> = {
@@ -195,7 +199,7 @@ async function findGoogleContact(opts: {
       email: null, // Google Places ne renvoie pas l'email
       hours: r.opening_hours?.weekday_text?.join(" · ") ?? null,
     };
-    cacheSet(key, result, CACHE_TTL_MS);
+    await setCachedContact(key, result, "google", POSITIVE_TTL_MS);
     return result;
   } catch {
     return null;

@@ -109,5 +109,33 @@ export async function ensureTertiary(): Promise<void> {
     }
   }
 
+  // Index unique partiel pour upsert refresh (préserve les contacts enrichis)
+  await db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_tert_occ_building_siret
+       ON tertiary_occupants(building_id, siret) WHERE siret IS NOT NULL`,
+  );
+
+  // Cache persistant des lookups contacts OSM/Google (TTL géré via expires_at)
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS contact_cache (
+      cache_key TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_contact_cache_expires ON contact_cache(expires_at);
+  `);
+
+  // Compteur d'usage Google Places (un compteur par jour UTC)
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS google_places_usage (
+      day TEXT PRIMARY KEY,
+      find_count INTEGER NOT NULL DEFAULT 0,
+      details_count INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `);
+
   ensured = true;
 }

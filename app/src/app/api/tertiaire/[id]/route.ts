@@ -108,29 +108,90 @@ export async function GET(
         lon: building.lon ?? undefined,
         limit: 50,
       });
-      // Re-persiste : delete + insert (avec dirigeants en JSON)
-      await db.run(`DELETE FROM tertiary_occupants WHERE building_id = ?`, [buildingId]);
+
+      // UPSERT par (building_id, siret) : préserve phone/website/email/hours/
+      // contact_source/contact_fetched_at quand l'occupant a déjà été enrichi.
+      const freshSirets: string[] = [];
       for (const o of fresh) {
+        const dirJson =
+          o.dirigeants && o.dirigeants.length > 0 ? JSON.stringify(o.dirigeants) : null;
+        if (o.siret) {
+          freshSirets.push(o.siret);
+          await db.run(
+            `INSERT INTO tertiary_occupants (
+               building_id, siret, siren, denomination, naf_code, naf_label,
+               tranche_effectif, adresse_enregistree, est_siege, est_actif,
+               dirigeants_json, cached_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+             ON CONFLICT(building_id, siret) WHERE siret IS NOT NULL DO UPDATE SET
+               siren = excluded.siren,
+               denomination = excluded.denomination,
+               naf_code = excluded.naf_code,
+               naf_label = excluded.naf_label,
+               tranche_effectif = excluded.tranche_effectif,
+               adresse_enregistree = excluded.adresse_enregistree,
+               est_siege = excluded.est_siege,
+               est_actif = excluded.est_actif,
+               dirigeants_json = excluded.dirigeants_json,
+               cached_at = unixepoch()`,
+            [
+              buildingId,
+              o.siret,
+              o.siren,
+              o.denomination,
+              o.nafCode,
+              o.nafLabel,
+              o.trancheEffectif,
+              o.adresseEnregistree,
+              o.estSiege ? 1 : 0,
+              o.estActif ? 1 : 0,
+              dirJson,
+            ],
+          );
+        } else {
+          // Sans SIRET : pas de clé d'unicité, simple INSERT
+          await db.run(
+            `INSERT INTO tertiary_occupants (
+               building_id, siret, siren, denomination, naf_code, naf_label,
+               tranche_effectif, adresse_enregistree, est_siege, est_actif, dirigeants_json
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              buildingId,
+              null,
+              o.siren,
+              o.denomination,
+              o.nafCode,
+              o.nafLabel,
+              o.trancheEffectif,
+              o.adresseEnregistree,
+              o.estSiege ? 1 : 0,
+              o.estActif ? 1 : 0,
+              dirJson,
+            ],
+          );
+        }
+      }
+
+      // Nettoyage : supprime les occupants disparus du résultat SIRENE
+      // SAUF ceux déjà enrichis (contact_fetched_at non NULL — travail utilisateur).
+      if (freshSirets.length > 0) {
+        const placeholders = freshSirets.map(() => "?").join(",");
         await db.run(
-          `INSERT INTO tertiary_occupants (
-             building_id, siret, siren, denomination, naf_code, naf_label,
-             tranche_effectif, adresse_enregistree, est_siege, est_actif, dirigeants_json
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            buildingId,
-            o.siret,
-            o.siren,
-            o.denomination,
-            o.nafCode,
-            o.nafLabel,
-            o.trancheEffectif,
-            o.adresseEnregistree,
-            o.estSiege ? 1 : 0,
-            o.estActif ? 1 : 0,
-            o.dirigeants && o.dirigeants.length > 0 ? JSON.stringify(o.dirigeants) : null,
-          ],
+          `DELETE FROM tertiary_occupants
+           WHERE building_id = ?
+             AND contact_fetched_at IS NULL
+             AND (siret IS NULL OR siret NOT IN (${placeholders}))`,
+          [buildingId, ...freshSirets],
+        );
+      } else {
+        // SIRENE n'a rien renvoyé : on garde tout ce qui est enrichi, on nettoie le reste
+        await db.run(
+          `DELETE FROM tertiary_occupants
+           WHERE building_id = ? AND contact_fetched_at IS NULL`,
+          [buildingId],
         );
       }
+
       occupants = await db.all<Occupant>(
         `SELECT id, siret, siren, denomination, naf_code, naf_label, tranche_effectif, est_siege, dirigeants_json, phone, website, email, hours, contact_source
          FROM tertiary_occupants WHERE building_id = ? ORDER BY est_siege DESC, denomination`,
