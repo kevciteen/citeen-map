@@ -15,6 +15,8 @@ import {
   Shield,
   LogOut,
   KeyRound,
+  BookOpen,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
@@ -28,6 +30,7 @@ const items = [
   { href: "/maisons", label: "Maisons individuelles", icon: Home },
   { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
+  { href: "/annuaire", label: "Annuaire unifié", icon: BookOpen },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];
 
@@ -86,16 +89,28 @@ export function Sidebar() {
           );
         })}
         {me?.role === "admin" ? (
-          <Link
-            href="/admin/users"
-            className={cn(
-              "sidebar-item mt-3 border-t border-border pt-3",
-              pathname.startsWith("/admin") && "sidebar-item-active",
-            )}
-          >
-            <Shield className="h-4 w-4" />
-            Gestion équipe
-          </Link>
+          <>
+            <Link
+              href="/admin/users"
+              className={cn(
+                "sidebar-item mt-3 border-t border-border pt-3",
+                pathname === "/admin/users" && "sidebar-item-active",
+              )}
+            >
+              <Shield className="h-4 w-4" />
+              Gestion équipe
+            </Link>
+            <Link
+              href="/admin/coords-health"
+              className={cn(
+                "sidebar-item",
+                pathname.startsWith("/admin/coords-health") && "sidebar-item-active",
+              )}
+            >
+              <Activity className="h-4 w-4" />
+              Santé coordonnées
+            </Link>
+          </>
         ) : null}
       </nav>
 

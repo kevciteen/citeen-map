@@ -25,6 +25,7 @@ import { DpeIndividualsCard } from "@/components/crm/dpe-individuals-card";
 import { SimilarsCard } from "@/components/crm/similars-card";
 import { CoproStreetView } from "@/components/crm/copro-streetview";
 import { CeeCoproPostes } from "@/components/crm/cee-copro-postes";
+import { CoproSyndicContacts } from "@/components/crm/copro-syndic-contacts";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -689,6 +690,9 @@ export function CoproFiche({
           </CardContent>
         </Card>
       </div>
+
+      {/* CONTACTS SYNDIC (Sirene + auto OSM/Google + manuel) */}
+      <CoproSyndicContacts syndicName={copro.syndic ?? null} />
 
       {/* DPE INDIVIDUELS TABLE */}
       <DpeIndividualsCard details={details} />
