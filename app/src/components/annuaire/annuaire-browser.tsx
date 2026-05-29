@@ -3,10 +3,16 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, Search, MapPin, Phone, Mail, Globe, Filter,
-  Building2, Briefcase, IdCard, Users,
+  Building2, Briefcase, IdCard, Users, Map as MapIcon, List,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  AnnuaireMap,
+  TYPE_COLORS,
+  type AnnuaireMapPoint,
+  type MapBounds,
+} from "./annuaire-map";
 
 type DirectoryRow = {
   id: number;
@@ -56,18 +62,29 @@ export function AnnuaireBrowser() {
   const [type, setType] = useState<TypeFilter>("all");
   const [onlyWithContact, setOnlyWithContact] = useState(false);
   const [onlyWithCoords, setOnlyWithCoords] = useState(false);
+  const [showMap, setShowMap] = useState(true);
+  const [bounds, setBounds] = useState<MapBounds | null>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
   const [total, setTotal] = useState<number | null>(null);
 
+  // Quand la carte est affichée, les résultats sont restreints à la bbox
+  // visible (onlyWithCoords devient implicite). Sinon = recherche full.
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const url = new URL("/api/directory", window.location.origin);
-      url.searchParams.set("limit", "300");
+      url.searchParams.set("limit", showMap ? "500" : "300");
       if (q.trim()) url.searchParams.set("q", q.trim());
       if (cp.trim()) url.searchParams.set("cp", cp.trim());
       if (type !== "all") url.searchParams.set("types", type);
       if (onlyWithContact) url.searchParams.set("onlyWithContact", "1");
-      if (onlyWithCoords) url.searchParams.set("onlyWithCoords", "1");
+      if (onlyWithCoords || showMap) url.searchParams.set("onlyWithCoords", "1");
+      if (showMap && bounds) {
+        url.searchParams.set("minLat", String(bounds.minLat));
+        url.searchParams.set("maxLat", String(bounds.maxLat));
+        url.searchParams.set("minLon", String(bounds.minLon));
+        url.searchParams.set("maxLon", String(bounds.maxLon));
+      }
 
       const [listRes, statsRes] = await Promise.all([
         fetch(url.toString()).then((r) => r.json()).catch(() => null),
@@ -78,11 +95,27 @@ export function AnnuaireBrowser() {
     } finally {
       setLoading(false);
     }
-  }, [q, cp, type, onlyWithContact, onlyWithCoords]);
+  }, [q, cp, type, onlyWithContact, onlyWithCoords, showMap, bounds]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Points pour la carte = items ayant des coordonnées
+  const mapPoints: AnnuaireMapPoint[] = items
+    .filter((i) => i.lat != null && i.lon != null)
+    .map((i) => ({
+      id: i.id,
+      entity_type: i.entity_type,
+      entity_ref: i.entity_ref,
+      display_name: i.display_name,
+      display_subtitle: i.display_subtitle,
+      lat: i.lat as number,
+      lon: i.lon as number,
+      phone: i.phone,
+      email: i.email,
+      website: i.website,
+    }));
 
   return (
     <div className="space-y-4">
@@ -134,10 +167,32 @@ export function AnnuaireBrowser() {
               checked={onlyWithCoords}
               onChange={(e) => setOnlyWithCoords(e.target.checked)}
               className="rounded"
+              disabled={showMap}
             />
             Avec coordonnées GPS
+            {showMap ? (
+              <span className="text-[10px] text-muted-foreground">
+                (implicite avec carte)
+              </span>
+            ) : null}
           </label>
-          <div className="ml-auto text-muted-foreground">
+          <Button
+            variant={showMap ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowMap((v) => !v)}
+            className="ml-auto"
+          >
+            {showMap ? (
+              <>
+                <List className="h-4 w-4" /> Vue liste
+              </>
+            ) : (
+              <>
+                <MapIcon className="h-4 w-4" /> Vue carte
+              </>
+            )}
+          </Button>
+          <div className="text-muted-foreground">
             {loading ? (
               <span className="inline-flex items-center gap-1">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -155,6 +210,32 @@ export function AnnuaireBrowser() {
           </div>
         </div>
       </div>
+
+      {/* Carte */}
+      {showMap ? (
+        <>
+          <AnnuaireMap
+            points={mapPoints}
+            onBoundsChange={setBounds}
+            onSelect={(key) => {
+              setHighlighted(key);
+              const el = document.getElementById(`row-${key}`);
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          />
+          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+            {Object.entries(TYPE_COLORS).map(([k, color]) => (
+              <span key={k} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ background: color }}
+                />
+                {TYPE_LABELS[k as DirectoryRow["entity_type"]]}
+              </span>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       {/* Résultats */}
       {!loading && items.length === 0 ? (
@@ -177,19 +258,40 @@ export function AnnuaireBrowser() {
       ) : null}
 
       <div className="space-y-2">
-        {items.map((r) => (
-          <DirectoryRowCard key={`${r.entity_type}-${r.id}`} row={r} />
-        ))}
+        {items.map((r) => {
+          const key = `${r.entity_type}-${r.entity_ref}`;
+          return (
+            <DirectoryRowCard
+              key={key}
+              row={r}
+              highlighted={highlighted === key}
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function DirectoryRowCard({ row }: { row: DirectoryRow }) {
+function DirectoryRowCard({
+  row,
+  highlighted,
+}: {
+  row: DirectoryRow;
+  highlighted?: boolean;
+}) {
   const Icon = TYPE_ICONS[row.entity_type];
   const detailHref = getDetailHref(row);
   return (
-    <div className="rounded-lg border border-border bg-card p-3 shadow-sm transition-colors hover:bg-secondary/20">
+    <div
+      id={`row-${row.entity_type}-${row.entity_ref}`}
+      className={
+        "rounded-lg border bg-card p-3 shadow-sm transition-colors hover:bg-secondary/20 " +
+        (highlighted
+          ? "border-primary ring-1 ring-primary/30"
+          : "border-border")
+      }
+    >
       <div className="flex items-start gap-3">
         <div className="rounded-md bg-primary/10 p-2 text-primary">
           <Icon className="h-4 w-4" />
