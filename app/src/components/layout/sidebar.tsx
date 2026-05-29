@@ -20,6 +20,7 @@ import {
   ScanSearch,
   Search,
   Command,
+  Rocket,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
@@ -35,6 +36,7 @@ const items = [
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
   { href: "/annuaire", label: "Annuaire unifié", icon: BookOpen },
   { href: "/dpe", label: "DPE par adresse", icon: ScanSearch },
+  { href: "/campagnes", label: "Campagnes prospection", icon: Rocket },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];
 
