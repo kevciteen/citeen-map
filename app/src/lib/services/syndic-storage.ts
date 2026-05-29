@@ -2,6 +2,13 @@ import { db } from "@/lib/db/client";
 import { ensureSyndicContactsTable } from "@/lib/db/ensure-syndic-contacts";
 import { resolveSyndicByName, type SyndicContact } from "@/lib/services/syndic-contact";
 
+/**
+ * Durée de fraîcheur des données Sirene cachées en DB. Au-delà, on
+ * refetch live (les sociétés ne changent pas tous les jours, 7j est OK
+ * pour un CRM de prospection).
+ */
+const SIRENE_TTL_SEC = 7 * 24 * 3600;
+
 export type SyndicContactRecord = {
   slug: string;
   name: string;
@@ -77,6 +84,53 @@ export async function getSyndicRecord(
     [slug],
   );
   return row ?? null;
+}
+
+/**
+ * Renvoie le SyndicContact (Sirene) en lisant d'abord le cache DB
+ * (sirene_json sur syndic_contacts), avec fallback live + re-persist.
+ * Évite ~200-400 ms d'HTTPS vers recherche-entreprises.api.gouv.fr à
+ * chaque vue de fiche syndic / copro.
+ */
+export async function getOrFetchSirene(
+  slug: string,
+  name: string,
+): Promise<SyndicContact | null> {
+  await ensureSyndicContactsTable();
+  const stored = await db.get<{
+    sirene_json: string | null;
+    updated_at: number | null;
+  }>(
+    `SELECT sirene_json, updated_at FROM syndic_contacts WHERE slug = ?`,
+    [slug],
+  );
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (stored?.sirene_json && stored.updated_at !== null) {
+    const age = nowSec - stored.updated_at;
+    if (age >= 0 && age < SIRENE_TTL_SEC) {
+      try {
+        return JSON.parse(stored.sirene_json) as SyndicContact;
+      } catch {
+        // JSON invalide → on tombera sur le live
+      }
+    }
+  }
+
+  const fresh = await resolveSyndicByName(name).catch(() => null);
+  if (fresh) {
+    // Upsert juste sirene_json (préserve les autres champs édités)
+    await db.run(
+      `INSERT INTO syndic_contacts (slug, name, sirene_json, created_at, updated_at)
+       VALUES (?, ?, ?, unixepoch(), unixepoch())
+       ON CONFLICT(slug) DO UPDATE SET
+         name = excluded.name,
+         sirene_json = excluded.sirene_json,
+         updated_at = unixepoch()`,
+      [slug, name, JSON.stringify(fresh)],
+    );
+  }
+  return fresh;
 }
 
 export async function upsertSyndicContact(input: {
@@ -155,9 +209,14 @@ export async function patchSyndicContact(
 export async function getSyndicAggregate(
   name: string,
 ): Promise<SyndicAggregate | null> {
-  const row = await db.get<SyndicAggregate>(
-    `SELECT
-       TRIM(c.syndic) AS syndic,
+  // Optim perf : on n'utilise PLUS `WHERE TRIM(c.syndic) = ?` (kill l'index
+  // idx_copros_syndic, full scan 100k rows). On essaie d'abord l'exact
+  // match indexé, et si rien, on tente avec TRIM (fallback safety).
+  // La correlated EXISTS sur prospects est remplacée par un LEFT JOIN sur
+  // une sous-requête DISTINCT qui scanne prospects 1 seule fois.
+  const baseSql = (whereSyndic: string, groupBy: string) => `
+    SELECT
+       ${groupBy} AS syndic,
        COUNT(*) AS nb_copros,
        COALESCE(SUM(c.nb_lots_habitation), 0) AS lots_total,
        COUNT(DISTINCT c.commune) AS nb_communes,
@@ -170,15 +229,29 @@ export async function getSyndicAggregate(
        SUM(CASE WHEN e.classe_finale = 'F' THEN 1 ELSE 0 END) AS dpe_f,
        SUM(CASE WHEN e.classe_finale = 'G' THEN 1 ELSE 0 END) AS dpe_g,
        SUM(CASE WHEN e.classe_finale IS NULL OR e.classe_finale = 'NC' THEN 1 ELSE 0 END) AS dpe_nc,
-       SUM(CASE WHEN EXISTS (SELECT 1 FROM prospects p WHERE p.copro_id = c.id) THEN 1 ELSE 0 END) AS in_pipeline,
+       SUM(CASE WHEN p.copro_id IS NOT NULL THEN 1 ELSE 0 END) AS in_pipeline,
        GROUP_CONCAT(DISTINCT c.departement) AS dept_list,
        GROUP_CONCAT(DISTINCT c.commune) AS commune_list
      FROM copros c
      LEFT JOIN dpe_estimates e ON e.copro_id = c.id
-     WHERE TRIM(c.syndic) = ?
-     GROUP BY TRIM(c.syndic)`,
+     LEFT JOIN (SELECT DISTINCT copro_id FROM prospects WHERE copro_id IS NOT NULL) p
+       ON p.copro_id = c.id
+     WHERE ${whereSyndic}
+     GROUP BY ${groupBy}
+  `;
+
+  // 1. Tentative indexée (chemin chaud)
+  let row = await db.get<SyndicAggregate>(
+    baseSql("c.syndic = ?", "c.syndic"),
     [name],
   );
+  // 2. Fallback safety (rare) si données contiennent des espaces autour
+  if (!row || row.nb_copros === 0) {
+    row = await db.get<SyndicAggregate>(
+      baseSql("TRIM(c.syndic) = ?", "TRIM(c.syndic)"),
+      [name.trim()],
+    );
+  }
   return row ?? null;
 }
 
@@ -202,13 +275,8 @@ export async function getSyndicFullDetail(
   // 2. Agrégats SQL
   const aggregate = await getSyndicAggregate(name);
 
-  // 3. Sirene live (cached 24h)
-  let sirene: SyndicContact | null = null;
-  try {
-    sirene = await resolveSyndicByName(name);
-  } catch {
-    // ignore — on retourne le reste
-  }
+  // 3. Sirene (DB-first, TTL 7j → fallback live + persist)
+  const sirene = await getOrFetchSirene(slug, name).catch(() => null);
 
   return {
     slug,

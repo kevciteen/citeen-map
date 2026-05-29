@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveSyndicByName } from "@/lib/services/syndic-contact";
-import { getSyndicRecord } from "@/lib/services/syndic-storage";
+import { getOrFetchSirene, getSyndicRecord } from "@/lib/services/syndic-storage";
 import { slugifySyndic } from "@/lib/db/ensure-syndic-contacts";
 import { ensureAuth } from "@/lib/auth/guards";
 
@@ -22,14 +21,16 @@ export async function GET(req: NextRequest) {
   }
   try {
     const slug = slugifySyndic(name);
-    const [sirene, stored] = await Promise.all([
-      resolveSyndicByName(name).catch(() => null),
-      getSyndicRecord(slug),
-    ]);
+    const stored = await getSyndicRecord(slug);
+    // getOrFetchSirene fait DB-first + fallback live → 1 seul roundtrip
+    // en cas de cache hit (premier appel : 200-400ms, suivants : ~20ms)
+    const sirene = await getOrFetchSirene(slug, name).catch(() => null);
 
-    // Si on a aucune donnée du tout, on renvoie null
     if (!sirene && !stored) {
-      return NextResponse.json({ contact: null });
+      return NextResponse.json(
+        { contact: null },
+        { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" } },
+      );
     }
 
     // Merge : user-edits écrasent les données Sirene
@@ -59,7 +60,17 @@ export async function GET(req: NextRequest) {
           stored.website || stored.address_override || stored.notes),
       ),
     };
-    return NextResponse.json({ contact: merged });
+    return NextResponse.json(
+      { contact: merged },
+      {
+        headers: {
+          // 60s frais côté navigateur (revisits instantanées), 5 min servi
+          // depuis cache pendant revalidation en arrière-plan.
+          "Cache-Control":
+            "private, max-age=60, stale-while-revalidate=300",
+        },
+      },
+    );
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message, contact: null },

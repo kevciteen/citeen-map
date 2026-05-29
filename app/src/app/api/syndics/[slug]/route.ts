@@ -21,7 +21,11 @@ export async function GET(
       { status: 404 },
     );
   }
-  return NextResponse.json(detail);
+  return NextResponse.json(detail, {
+    headers: {
+      "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+    },
+  });
 }
 
 export async function PATCH(

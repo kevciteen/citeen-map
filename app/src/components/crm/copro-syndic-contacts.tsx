@@ -9,15 +9,17 @@
  * Bouton "Enrichir auto" déclenche POST /api/syndics/[slug]/enrich-contacts
  * et rafraîchit la fiche.
  */
-import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Mail, Phone, Globe, MapPin, Users, IdCard, RefreshCw,
+  Loader2, Mail, Phone, Globe, MapPin, Users, IdCard,
   Copy, ExternalLink, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { jsonFetcher } from "@/lib/fetcher";
 
 function slugify(name: string): string {
   return name
@@ -69,65 +71,49 @@ export function CoproSyndicContacts({
 }: {
   syndicName: string | null;
 }) {
-  const [detail, setDetail] = useState<SyndicDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+  const qc = useQueryClient();
   const slug = syndicName ? slugify(syndicName) : null;
+  const queryKey = ["syndic-detail", slug, syndicName] as const;
 
-  const load = useCallback(async () => {
-    if (!syndicName || !slug) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const r = await fetch(
-        `/api/syndics/${slug}?name=${encodeURIComponent(syndicName)}`,
-      );
-      const j = await r.json();
-      if (!r.ok) {
-        setError(j.error ?? "Syndic introuvable");
-        setDetail(null);
-        return;
-      }
-      setDetail(j);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [slug, syndicName]);
+  const { data: detail, isPending, error } = useQuery({
+    queryKey,
+    queryFn: ({ signal }) =>
+      jsonFetcher<SyndicDetail>(
+        `/api/syndics/${slug}?name=${encodeURIComponent(syndicName ?? "")}`,
+        signal,
+      ),
+    enabled: Boolean(slug && syndicName),
+    staleTime: 5 * 60 * 1000, // 5 min : peu de changements côté syndic
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const enrich = async () => {
-    if (!slug || !syndicName) return;
-    setEnriching(true);
-    try {
+  const enrichMutation = useMutation({
+    mutationFn: async (): Promise<{
+      resolved: boolean;
+      source: string;
+      reason?: string;
+    }> => {
+      if (!slug || !syndicName) throw new Error("Syndic non identifié");
       const r = await fetch(`/api/syndics/${slug}/enrich-contacts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: syndicName }),
       });
       const j = await r.json();
-      if (!r.ok) {
-        toast.error(j.error ?? "Erreur enrichissement");
-        return;
-      }
+      if (!r.ok) throw new Error(j.error ?? "Erreur enrichissement");
+      return j;
+    },
+    onSuccess: (j) => {
       if (j.resolved) {
         toast.success(`Enrichi via ${j.source.toUpperCase()}`);
       } else {
         toast.warning(j.reason ?? "Aucun contact trouvé");
       }
-      await load();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setEnriching(false);
-    }
-  };
+      void qc.invalidateQueries({ queryKey });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const enriching = enrichMutation.isPending;
 
   if (!syndicName) {
     return (
@@ -162,8 +148,8 @@ export function CoproSyndicContacts({
           <Button
             variant="outline"
             size="sm"
-            onClick={enrich}
-            disabled={enriching || loading}
+            onClick={() => enrichMutation.mutate()}
+            disabled={enriching || isPending}
             title="Récupère téléphone / site web via OSM + Google Places (cache 7j)"
           >
             {enriching ? (
@@ -184,16 +170,17 @@ export function CoproSyndicContacts({
         </div>
       </CardHeader>
       <CardContent className="space-y-3 text-xs">
-        {loading && !detail ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Chargement…
+        {isPending ? (
+          <div className="space-y-2">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-3 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
           </div>
         ) : null}
 
         {error ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">
-            {error}
+            {(error as Error).message}
           </p>
         ) : null}
 
@@ -254,12 +241,12 @@ export function CoproSyndicContacts({
               </p>
             ) : null}
           </div>
-        ) : detail && !loading ? (
+        ) : detail && !isPending ? (
           <p className="text-muted-foreground">
             Aucun contact enregistré.{" "}
             <button
-              onClick={enrich}
-              className="text-primary hover:underline"
+              onClick={() => enrichMutation.mutate()}
+              className="text-primary hover:underline disabled:opacity-50"
               disabled={enriching}
             >
               Lancer l&apos;enrichissement automatique

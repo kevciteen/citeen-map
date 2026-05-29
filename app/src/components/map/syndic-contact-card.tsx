@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import {
   Copy,
   ExternalLink,
@@ -13,6 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import { jsonFetcher } from "@/lib/fetcher";
 
 function slugify(name: string): string {
   return name
@@ -55,29 +56,24 @@ export function SyndicContactCard({
   syndicName: string;
   coproContext?: { nom: string | null; adresse: string | null };
 }) {
-  const [contact, setContact] = useState<SyndicContact | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!syndicName || syndicName.trim().length < 3) return;
-    let aborted = false;
-    setLoading(true);
-    setError(null);
-    setContact(null);
-    fetch(`/api/syndics/lookup?name=${encodeURIComponent(syndicName)}`)
-      .then((r) => r.json())
-      .then((j: { contact: SyndicContact | null; error?: string }) => {
-        if (aborted) return;
-        if (j.contact) setContact(j.contact);
-        else setError(j.error ?? "Pas de match trouvé");
-      })
-      .catch((e) => !aborted && setError((e as Error).message))
-      .finally(() => !aborted && setLoading(false));
-    return () => {
-      aborted = true;
-    };
-  }, [syndicName]);
+  const enabled = Boolean(syndicName && syndicName.trim().length >= 3);
+  const { data, isPending, error } = useQuery({
+    queryKey: ["syndic-lookup", syndicName],
+    queryFn: ({ signal }) =>
+      jsonFetcher<{ contact: SyndicContact | null; error?: string }>(
+        `/api/syndics/lookup?name=${encodeURIComponent(syndicName)}`,
+        signal,
+      ),
+    enabled,
+    staleTime: 5 * 60 * 1000, // 5 min : syndic ne change pas en navigation
+  });
+  const contact = data?.contact ?? null;
+  const loading = isPending && enabled;
+  const errorMsg = error
+    ? (error as Error).message
+    : data?.error && !data?.contact
+      ? data.error
+      : null;
 
   const copy = (label: string, text: string) => {
     void navigator.clipboard.writeText(text);
@@ -120,12 +116,12 @@ export function SyndicContactCard({
     );
   }
 
-  if (error || !contact) {
+  if (errorMsg || !contact) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
         <p className="font-semibold">Pas de fiche entreprise trouvée</p>
         <p className="mt-1 opacity-80">
-          {error ?? "Le nom du syndic ne match aucune entreprise active."}
+          {errorMsg ?? "Le nom du syndic ne match aucune entreprise active."}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Link
