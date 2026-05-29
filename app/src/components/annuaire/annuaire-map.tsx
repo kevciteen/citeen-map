@@ -28,6 +28,20 @@ export const TYPE_COLORS: Record<string, string> = {
   prospect_custom: "#a855f7",  // purple-500
 };
 
+// Coloriage DPE style Go Renov' / ADEME (passoires F+G en rouge)
+export const DPE_COLORS: Record<string, string> = {
+  A: "#1f9d55",   // emerald
+  B: "#7cb342",   // lime
+  C: "#cddc39",   // yellow-lime
+  D: "#fdd835",   // amber
+  E: "#fb8c00",   // orange
+  F: "#e53935",   // red
+  G: "#b71c1c",   // dark red
+  NC: "#94a3b8",  // slate
+};
+
+export type ColorMode = "type" | "dpe";
+
 export type AnnuaireMapPoint = {
   id: number;
   entity_type: string;
@@ -39,6 +53,7 @@ export type AnnuaireMapPoint = {
   phone: string | null;
   email: string | null;
   website: string | null;
+  dpe_class: string | null;
 };
 
 export type MapBounds = {
@@ -55,10 +70,12 @@ export function AnnuaireMap({
   points,
   onBoundsChange,
   onSelect,
+  colorMode = "type",
 }: {
   points: AnnuaireMapPoint[];
   onBoundsChange?: (b: MapBounds) => void;
   onSelect?: (key: string) => void;
+  colorMode?: ColorMode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -98,15 +115,7 @@ export function AnnuaireMap({
             "interpolate", ["linear"], ["zoom"],
             10, 4, 14, 7, 16, 10,
           ],
-          "circle-color": [
-            "match",
-            ["get", "entity_type"],
-            "copro", TYPE_COLORS.copro,
-            "occupant", TYPE_COLORS.occupant,
-            "syndic", TYPE_COLORS.syndic,
-            "prospect_custom", TYPE_COLORS.prospect_custom,
-            "#64748b",
-          ],
+          "circle-color": buildColorExpression(colorMode),
           "circle-stroke-width": 1.5,
           "circle-stroke-color": "#ffffff",
           "circle-opacity": 0.9,
@@ -206,6 +215,13 @@ export function AnnuaireMap({
     updateSource(map, points);
   }, [points]);
 
+  // Update color expression quand colorMode change (sans reload de la carte)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer(LAYER_ID)) return;
+    map.setPaintProperty(LAYER_ID, "circle-color", buildColorExpression(colorMode));
+  }, [colorMode]);
+
   return (
     <div
       ref={containerRef}
@@ -230,9 +246,36 @@ function updateSource(map: maplibregl.Map, points: AnnuaireMapPoint[]) {
         phone: p.phone,
         email: p.email,
         website: p.website,
+        dpe_class: p.dpe_class ?? "NC",
       },
     }));
   src.setData({ type: "FeatureCollection", features });
+}
+
+function buildColorExpression(mode: ColorMode): maplibregl.ExpressionSpecification {
+  if (mode === "dpe") {
+    return [
+      "match",
+      ["get", "dpe_class"],
+      "A", DPE_COLORS.A,
+      "B", DPE_COLORS.B,
+      "C", DPE_COLORS.C,
+      "D", DPE_COLORS.D,
+      "E", DPE_COLORS.E,
+      "F", DPE_COLORS.F,
+      "G", DPE_COLORS.G,
+      DPE_COLORS.NC,
+    ];
+  }
+  return [
+    "match",
+    ["get", "entity_type"],
+    "copro", TYPE_COLORS.copro,
+    "occupant", TYPE_COLORS.occupant,
+    "syndic", TYPE_COLORS.syndic,
+    "prospect_custom", TYPE_COLORS.prospect_custom,
+    "#64748b",
+  ];
 }
 
 function getDetailHref(entity_type: string, entity_ref: string): string | null {

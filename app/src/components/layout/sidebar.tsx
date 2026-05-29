@@ -18,6 +18,8 @@ import {
   BookOpen,
   Activity,
   ScanSearch,
+  Search,
+  Command,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
@@ -65,7 +67,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="px-3 pt-4">
+      <div className="space-y-2 px-3 pt-4">
         <Link
           href="/prospects/new"
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
@@ -73,6 +75,17 @@ export function Sidebar() {
           <PlusCircle className="h-4 w-4" />
           Nouveau prospect
         </Link>
+        <button
+          onClick={() => window.dispatchEvent(new Event("global-search:open"))}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Search className="h-3 w-3" /> Recherche globale
+          </span>
+          <kbd className="inline-flex items-center gap-0.5 rounded border border-border bg-secondary px-1 text-[10px]">
+            <Command className="h-2.5 w-2.5" />K
+          </kbd>
+        </button>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4">

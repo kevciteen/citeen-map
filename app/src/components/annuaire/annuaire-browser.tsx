@@ -14,7 +14,9 @@ import { jsonFetcher } from "@/lib/fetcher";
 import {
   AnnuaireMap,
   TYPE_COLORS,
+  DPE_COLORS,
   type AnnuaireMapPoint,
+  type ColorMode,
   type MapBounds,
 } from "./annuaire-map";
 
@@ -82,6 +84,7 @@ export function AnnuaireBrowser() {
   const [onlyWithCoords, setOnlyWithCoords] = useState(false);
   const [showMap, setShowMap] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [colorMode, setColorMode] = useState<ColorMode>("type");
   const [bounds, setBounds] = useState<MapBounds | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
 
@@ -178,6 +181,7 @@ export function AnnuaireBrowser() {
       phone: i.phone,
       email: i.email,
       website: i.website,
+      dpe_class: i.dpe_class,
     }));
 
   return (
@@ -368,6 +372,7 @@ export function AnnuaireBrowser() {
         <>
           <AnnuaireMap
             points={mapPoints}
+            colorMode={colorMode}
             onBoundsChange={setBounds}
             onSelect={(key) => {
               setHighlighted(key);
@@ -375,16 +380,52 @@ export function AnnuaireBrowser() {
               if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
             }}
           />
-          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-            {Object.entries(TYPE_COLORS).map(([k, color]) => (
-              <span key={k} className="flex items-center gap-1.5">
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ background: color }}
-                />
-                {TYPE_LABELS[k as DirectoryRow["entity_type"]]}
-              </span>
-            ))}
+          <div className="flex flex-wrap items-center gap-3 text-[11px]">
+            <div className="flex items-center gap-1 rounded-md border border-border bg-card p-1">
+              <button
+                onClick={() => setColorMode("type")}
+                className={
+                  "rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors " +
+                  (colorMode === "type"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-secondary")
+                }
+              >
+                Par type
+              </button>
+              <button
+                onClick={() => setColorMode("dpe")}
+                className={
+                  "rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors " +
+                  (colorMode === "dpe"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-secondary")
+                }
+              >
+                Par DPE
+              </button>
+            </div>
+            {colorMode === "type" ? (
+              Object.entries(TYPE_COLORS).map(([k, color]) => (
+                <span key={k} className="flex items-center gap-1.5 text-muted-foreground">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ background: color }}
+                  />
+                  {TYPE_LABELS[k as DirectoryRow["entity_type"]]}
+                </span>
+              ))
+            ) : (
+              ["A", "B", "C", "D", "E", "F", "G", "NC"].map((k) => (
+                <span key={k} className="flex items-center gap-1.5 text-muted-foreground">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white"
+                    style={{ background: DPE_COLORS[k] }}
+                  />
+                  {k}
+                </span>
+              ))
+            )}
           </div>
         </>
       ) : null}

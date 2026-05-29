@@ -1,4 +1,5 @@
 import { Sidebar } from "@/components/layout/sidebar";
+import { GlobalSearch } from "@/components/global-search/global-search";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -13,6 +14,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
+      <GlobalSearch />
     </div>
   );
 }
