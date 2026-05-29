@@ -12,6 +12,7 @@ import { db } from "@/lib/db/client";
 import { ensureTertiary } from "@/lib/db/ensure-tertiary";
 import { ensureAuth } from "@/lib/auth/guards";
 import { searchEntreprisesAtAddress } from "@/lib/services/entreprises";
+import { syncDirectoryBuilding } from "@/lib/services/directory-sync";
 
 export const runtime = "nodejs";
 
@@ -197,6 +198,11 @@ export async function GET(
          FROM tertiary_occupants WHERE building_id = ? ORDER BY est_siege DESC, denomination`,
         [buildingId],
       );
+
+      // Double-write : resync de tous les occupants de ce bâtiment dans
+      // l'annuaire (les anciennes lignes supprimées sont écrasées au
+      // prochain /sync complet, mais ne polluent pas la vue immédiate).
+      await syncDirectoryBuilding(buildingId).catch(() => {});
     }
   }
 

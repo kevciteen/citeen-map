@@ -15,6 +15,7 @@ import { ensureSyndicContactsTable } from "@/lib/db/ensure-syndic-contacts";
 import { resolveSyndicByName, type SyndicContact } from "./syndic-contact";
 import { geocodeAddress } from "./ban";
 import { findContactInfo } from "./coords";
+import { syncDirectorySyndic } from "./directory-sync";
 
 export type SyndicEnrichResult = {
   resolved: boolean;
@@ -42,6 +43,7 @@ export async function enrichSyndicAuto(
       phone: null, website: null, email: null, hours: null,
       source: "none", lat: null, lon: null,
     }, sirene);
+    await syncDirectorySyndic(slug).catch(() => {});
     return {
       resolved: false,
       source: "none",
@@ -78,6 +80,12 @@ export async function enrichSyndicAuto(
     lat,
     lon,
   }, sirene);
+
+  // Double-write : sync immédiat dans l'annuaire unifié
+  await syncDirectorySyndic(slug).catch(() => {
+    // Le sync best-effort ; on ne fait pas échouer l'enrichissement si
+    // l'annuaire est temporairement indisponible (CRON sync rattrapera).
+  });
 
   return {
     resolved: contact.source !== "none",

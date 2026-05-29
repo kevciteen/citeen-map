@@ -11,6 +11,7 @@
 import { db } from "@/lib/db/client";
 import { geocodeAddress } from "./ban";
 import { getParcelByRef } from "./cadastre";
+import { syncDirectoryCopro } from "./directory-sync";
 
 export type BackfillBatchResult = {
   scanned: number;
@@ -60,6 +61,7 @@ export async function backfillCoprosCoordsBatch(
            WHERE id = ?`,
           [banResult.lat, banResult.lon, banResult.score, row.id],
         );
+        await syncDirectoryCopro(row.id).catch(() => {});
         byBan++;
         continue;
       }
@@ -72,6 +74,7 @@ export async function backfillCoprosCoordsBatch(
            WHERE id = ?`,
           [cadResult.lat, cadResult.lon, row.id],
         );
+        await syncDirectoryCopro(row.id).catch(() => {});
         byCadastre++;
         continue;
       }
@@ -82,6 +85,7 @@ export async function backfillCoprosCoordsBatch(
          WHERE id = ?`,
         [row.id],
       );
+      await syncDirectoryCopro(row.id).catch(() => {});
       unresolved++;
     } catch {
       errors++;

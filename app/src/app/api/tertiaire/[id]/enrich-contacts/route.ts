@@ -17,6 +17,7 @@ import { ensureTertiary } from "@/lib/db/ensure-tertiary";
 import { ensureAuth } from "@/lib/auth/guards";
 import { rateLimit } from "@/lib/rate-limit";
 import { findContactInfo } from "@/lib/services/coords";
+import { syncDirectoryOccupant } from "@/lib/services/directory-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -110,6 +111,7 @@ export async function POST(
               o.id,
             ],
           );
+          await syncDirectoryOccupant(o.id).catch(() => {});
           if (contact.source !== "none") enrichedOk++;
           else enrichedFail++;
         } catch {

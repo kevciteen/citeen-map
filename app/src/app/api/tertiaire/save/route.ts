@@ -13,6 +13,7 @@ import { db } from "@/lib/db/client";
 import { ensureTertiary } from "@/lib/db/ensure-tertiary";
 import { ensureAuth } from "@/lib/auth/guards";
 import type { TertiaireLookupResult } from "@/lib/services/tertiaire";
+import { syncDirectoryBuilding } from "@/lib/services/directory-sync";
 
 export const runtime = "nodejs";
 
@@ -220,30 +221,76 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Persiste les occupants (delete + insert)
+  // Persiste les occupants en UPSERT (même logique que /api/tertiaire/[id]
+  // refresh : préserve phone/website/email/hours déjà enrichis sur ré-save).
   if (payload.occupants && payload.occupants.length > 0) {
-    await db.run(`DELETE FROM tertiary_occupants WHERE building_id = ?`, [buildingId]);
+    const freshSirets: string[] = [];
     for (const o of payload.occupants) {
+      if (o.siret) {
+        freshSirets.push(o.siret);
+        await db.run(
+          `INSERT INTO tertiary_occupants (
+             building_id, siret, siren, denomination, naf_code, naf_label,
+             tranche_effectif, adresse_enregistree, est_siege, est_actif, cached_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+           ON CONFLICT(building_id, siret) WHERE siret IS NOT NULL DO UPDATE SET
+             siren = excluded.siren,
+             denomination = excluded.denomination,
+             naf_code = excluded.naf_code,
+             naf_label = excluded.naf_label,
+             tranche_effectif = excluded.tranche_effectif,
+             adresse_enregistree = excluded.adresse_enregistree,
+             est_siege = excluded.est_siege,
+             est_actif = excluded.est_actif,
+             cached_at = unixepoch()`,
+          [
+            buildingId,
+            o.siret,
+            o.siren,
+            o.denomination,
+            o.nafCode,
+            o.nafLabel,
+            o.trancheEffectif,
+            o.adresseEnregistree,
+            o.estSiege ? 1 : 0,
+            o.estActif ? 1 : 0,
+          ],
+        );
+      } else {
+        await db.run(
+          `INSERT INTO tertiary_occupants (
+             building_id, siret, siren, denomination, naf_code, naf_label,
+             tranche_effectif, adresse_enregistree, est_siege, est_actif
+           ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            buildingId,
+            o.siren,
+            o.denomination,
+            o.nafCode,
+            o.nafLabel,
+            o.trancheEffectif,
+            o.adresseEnregistree,
+            o.estSiege ? 1 : 0,
+            o.estActif ? 1 : 0,
+          ],
+        );
+      }
+    }
+    // Cleanup : enlève les occupants disparus du payload SAUF s'ils sont enrichis
+    if (freshSirets.length > 0) {
+      const placeholders = freshSirets.map(() => "?").join(",");
       await db.run(
-        `INSERT INTO tertiary_occupants (
-           building_id, siret, siren, denomination, naf_code, naf_label,
-           tranche_effectif, adresse_enregistree, est_siege, est_actif
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          buildingId,
-          o.siret,
-          o.siren,
-          o.denomination,
-          o.nafCode,
-          o.nafLabel,
-          o.trancheEffectif,
-          o.adresseEnregistree,
-          o.estSiege ? 1 : 0,
-          o.estActif ? 1 : 0,
-        ],
+        `DELETE FROM tertiary_occupants
+         WHERE building_id = ?
+           AND contact_fetched_at IS NULL
+           AND (siret IS NULL OR siret NOT IN (${placeholders}))`,
+        [buildingId, ...freshSirets],
       );
     }
   }
+
+  // Double-write annuaire (best-effort)
+  await syncDirectoryBuilding(buildingId).catch(() => {});
 
   return NextResponse.json({ buildingId, created });
 }

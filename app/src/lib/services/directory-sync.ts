@@ -82,6 +82,21 @@ type CoproRow = {
   nb_lots_habitation: number | null;
 };
 
+function buildCoproArgs(r: CoproRow): Args {
+  const name =
+    r.nom_copro?.trim() ||
+    (r.adresse ? `Copropriété ${r.adresse}` : `Copro ${r.numero_immatriculation ?? r.id}`);
+  const lots = r.nb_lots_habitation ?? r.nb_lots;
+  const subtitle = `Copropriété${lots ? ` — ${lots} lots` : ""}`;
+  return [
+    "copro", String(r.id), name, subtitle,
+    r.adresse, r.code_postal, r.commune, r.departement,
+    r.lat, r.lon, r.coords_source, r.coords_score,
+    null, null, null, null, null, null, null,
+    null, null, null,
+  ];
+}
+
 async function syncCopros(): Promise<number> {
   const rows = await db.all<CoproRow>(
     `SELECT id, numero_immatriculation, nom_copro, adresse, code_postal, commune,
@@ -89,21 +104,21 @@ async function syncCopros(): Promise<number> {
             nb_lots, nb_lots_habitation
      FROM copros`,
   );
-  for (const r of rows) {
-    const name =
-      r.nom_copro?.trim() ||
-      (r.adresse ? `Copropriété ${r.adresse}` : `Copro ${r.numero_immatriculation ?? r.id}`);
-    const lots = r.nb_lots_habitation ?? r.nb_lots;
-    const subtitle = `Copropriété${lots ? ` — ${lots} lots` : ""}`;
-    await upsert([
-      "copro", String(r.id), name, subtitle,
-      r.adresse, r.code_postal, r.commune, r.departement,
-      r.lat, r.lon, r.coords_source, r.coords_score,
-      null, null, null, null, null, null, null,
-      null, null, null,
-    ]);
-  }
+  for (const r of rows) await upsert(buildCoproArgs(r));
   return rows.length;
+}
+
+export async function syncDirectoryCopro(coproId: number): Promise<void> {
+  await ensureDirectory();
+  const row = await db.get<CoproRow>(
+    `SELECT id, numero_immatriculation, nom_copro, adresse, code_postal, commune,
+            departement, lat, lon, coords_source, coords_score,
+            nb_lots, nb_lots_habitation
+     FROM copros WHERE id = ?`,
+    [coproId],
+  );
+  if (!row) return;
+  await upsert(buildCoproArgs(row));
 }
 
 /* ---------------------------- OCCUPANTS TERTIAIRE ---------------------------- */
@@ -129,38 +144,73 @@ type OccupantRow = {
   b_lon: number | null;
 };
 
+function buildOccupantArgs(r: OccupantRow): Args {
+  const name = r.denomination?.trim() || `SIRET ${r.siret ?? r.id}`;
+  const naf = r.naf_label?.trim();
+  const eff = r.tranche_effectif?.trim();
+  const subtitleParts: string[] = ["Société tertiaire"];
+  if (naf) subtitleParts.push(naf);
+  if (eff && eff !== "NN" && eff !== "00") subtitleParts.push(`eff. ${eff}`);
+  const subtitle = subtitleParts.join(" — ");
+  const channelSource = r.contact_source && r.contact_source !== "none" ? r.contact_source : null;
+  return [
+    "occupant", String(r.id), name, subtitle,
+    r.b_adresse, r.b_code_postal, r.b_commune, r.b_departement,
+    r.b_lat, r.b_lon, r.b_lat != null ? "sirene" : null, null,
+    r.phone, r.phone ? channelSource : null,
+    r.email, r.email ? channelSource : null,
+    r.website, r.website ? channelSource : null,
+    r.hours,
+    null, r.building_id, r.contact_fetched_at,
+  ];
+}
+
+const OCCUPANT_SELECT = `
+  SELECT o.id, o.building_id, o.siret, o.denomination, o.naf_label,
+         o.tranche_effectif, o.phone, o.website, o.email, o.hours,
+         o.contact_source, o.contact_fetched_at,
+         b.adresse AS b_adresse, b.code_postal AS b_code_postal,
+         b.commune AS b_commune, b.departement AS b_departement,
+         b.lat AS b_lat, b.lon AS b_lon
+  FROM tertiary_occupants o
+  LEFT JOIN tertiary_buildings b ON b.id = o.building_id
+`;
+
 async function syncOccupants(): Promise<number> {
-  const rows = await db.all<OccupantRow>(
-    `SELECT o.id, o.building_id, o.siret, o.denomination, o.naf_label,
-            o.tranche_effectif, o.phone, o.website, o.email, o.hours,
-            o.contact_source, o.contact_fetched_at,
-            b.adresse AS b_adresse, b.code_postal AS b_code_postal,
-            b.commune AS b_commune, b.departement AS b_departement,
-            b.lat AS b_lat, b.lon AS b_lon
-     FROM tertiary_occupants o
-     LEFT JOIN tertiary_buildings b ON b.id = o.building_id`,
-  );
-  for (const r of rows) {
-    const name = r.denomination?.trim() || `SIRET ${r.siret ?? r.id}`;
-    const naf = r.naf_label?.trim();
-    const eff = r.tranche_effectif?.trim();
-    const subtitleParts: string[] = ["Société tertiaire"];
-    if (naf) subtitleParts.push(naf);
-    if (eff && eff !== "NN" && eff !== "00") subtitleParts.push(`eff. ${eff}`);
-    const subtitle = subtitleParts.join(" — ");
-    const channelSource = r.contact_source && r.contact_source !== "none" ? r.contact_source : null;
-    await upsert([
-      "occupant", String(r.id), name, subtitle,
-      r.b_adresse, r.b_code_postal, r.b_commune, r.b_departement,
-      r.b_lat, r.b_lon, r.b_lat != null ? "sirene" : null, null,
-      r.phone, r.phone ? channelSource : null,
-      r.email, r.email ? channelSource : null,
-      r.website, r.website ? channelSource : null,
-      r.hours,
-      null, r.building_id, r.contact_fetched_at,
-    ]);
-  }
+  const rows = await db.all<OccupantRow>(OCCUPANT_SELECT);
+  for (const r of rows) await upsert(buildOccupantArgs(r));
   return rows.length;
+}
+
+export async function syncDirectoryOccupant(occupantId: number): Promise<void> {
+  await ensureDirectory();
+  const row = await db.get<OccupantRow>(
+    `${OCCUPANT_SELECT} WHERE o.id = ?`,
+    [occupantId],
+  );
+  if (!row) return;
+  await upsert(buildOccupantArgs(row));
+}
+
+export async function syncDirectoryBuilding(buildingId: number): Promise<number> {
+  await ensureDirectory();
+  const rows = await db.all<OccupantRow>(
+    `${OCCUPANT_SELECT} WHERE o.building_id = ?`,
+    [buildingId],
+  );
+  for (const r of rows) await upsert(buildOccupantArgs(r));
+  return rows.length;
+}
+
+export async function deleteDirectoryEntry(
+  entityType: string,
+  entityRef: string,
+): Promise<void> {
+  await ensureDirectory();
+  await db.run(
+    `DELETE FROM directory WHERE entity_type = ? AND entity_ref = ?`,
+    [entityType, entityRef],
+  );
 }
 
 /* --------------------------------- SYNDICS --------------------------------- */
@@ -199,30 +249,42 @@ function parseSirene(json: string | null): SireneAddress | null {
   }
 }
 
+function buildSyndicArgs(r: SyndicRow): Args {
+  const sirene = parseSirene(r.sirene_json);
+  const adresse = r.address_override?.trim() || sirene?.adresse || null;
+  const cp = sirene?.codePostal ?? null;
+  const commune = sirene?.commune ?? null;
+  const dept = sirene?.departement ?? null;
+  // Channels : manuel > auto
+  const phone = r.phone?.trim() || r.auto_phone || null;
+  const phoneSrc = r.phone?.trim() ? "manual" : (phone ? r.auto_source : null);
+  const email = r.email?.trim() || r.auto_email || null;
+  const emailSrc = r.email?.trim() ? "manual" : (email ? r.auto_source : null);
+  const website = r.website?.trim() || r.auto_website || null;
+  const websiteSrc = r.website?.trim() ? "manual" : (website ? r.auto_source : null);
+  return [
+    "syndic", r.slug, r.name, "Syndic",
+    adresse, cp, commune, dept,
+    r.auto_lat, r.auto_lon, r.auto_lat != null ? "ban" : null, null,
+    phone, phoneSrc, email, emailSrc, website, websiteSrc, r.auto_hours,
+    null, null, r.auto_fetched_at,
+  ];
+}
+
 async function syncSyndics(): Promise<number> {
   const rows = await db.all<SyndicRow>(`SELECT * FROM syndic_contacts`);
-  for (const r of rows) {
-    const sirene = parseSirene(r.sirene_json);
-    const adresse = r.address_override?.trim() || sirene?.adresse || null;
-    const cp = sirene?.codePostal ?? null;
-    const commune = sirene?.commune ?? null;
-    const dept = sirene?.departement ?? null;
-    // Channels : manuel > auto
-    const phone = r.phone?.trim() || r.auto_phone || null;
-    const phoneSrc = r.phone?.trim() ? "manual" : (phone ? r.auto_source : null);
-    const email = r.email?.trim() || r.auto_email || null;
-    const emailSrc = r.email?.trim() ? "manual" : (email ? r.auto_source : null);
-    const website = r.website?.trim() || r.auto_website || null;
-    const websiteSrc = r.website?.trim() ? "manual" : (website ? r.auto_source : null);
-    await upsert([
-      "syndic", r.slug, r.name, "Syndic",
-      adresse, cp, commune, dept,
-      r.auto_lat, r.auto_lon, r.auto_lat != null ? "ban" : null, null,
-      phone, phoneSrc, email, emailSrc, website, websiteSrc, r.auto_hours,
-      null, null, r.auto_fetched_at,
-    ]);
-  }
+  for (const r of rows) await upsert(buildSyndicArgs(r));
   return rows.length;
+}
+
+export async function syncDirectorySyndic(slug: string): Promise<void> {
+  await ensureDirectory();
+  const row = await db.get<SyndicRow>(
+    `SELECT * FROM syndic_contacts WHERE slug = ?`,
+    [slug],
+  );
+  if (!row) return;
+  await upsert(buildSyndicArgs(row));
 }
 
 /* ----------------------------- PROSPECTS CUSTOM ----------------------------- */
