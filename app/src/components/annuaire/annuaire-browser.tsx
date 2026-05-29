@@ -1,10 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Loader2, Search, MapPin, Phone, Mail, Globe, Filter,
-  Building2, Briefcase, IdCard, Users, Map as MapIcon, List,
+  Building2, Briefcase, IdCard, Users, Map as MapIcon, List, Download,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,9 @@ type DirectoryRow = {
   website_source: string | null;
   parent_copro_id: number | null;
   parent_building_id: number | null;
+  dpe_class: string | null;
+  nb_lots: number | null;
+  secteur: string | null;
   synced_at: number;
 };
 
@@ -58,13 +61,27 @@ const TYPE_ICONS: Record<DirectoryRow["entity_type"], typeof Building2> = {
   prospect_custom: Users,
 };
 
+const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G", "NC"] as const;
+const SECTEURS = [
+  "Bureaux",
+  "Commerces",
+  "Hotellerie / Restauration",
+  "Sante",
+  "Enseignement",
+  "Autres secteurs",
+] as const;
+
 export function AnnuaireBrowser() {
   const [q, setQ] = useState("");
   const [cp, setCp] = useState("");
   const [type, setType] = useState<TypeFilter>("all");
+  const [dpe, setDpe] = useState<string[]>([]);
+  const [minLots, setMinLots] = useState("");
+  const [secteur, setSecteur] = useState("");
   const [onlyWithContact, setOnlyWithContact] = useState(false);
   const [onlyWithCoords, setOnlyWithCoords] = useState(false);
   const [showMap, setShowMap] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [bounds, setBounds] = useState<MapBounds | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
 
@@ -72,6 +89,27 @@ export function AnnuaireBrowser() {
   // tape encore. Les CP et toggles changent rarement → pas debounced.
   const debouncedQ = useDebouncedValue(q, 250);
   const debouncedCp = useDebouncedValue(cp, 250);
+  const debouncedMinLots = useDebouncedValue(minLots, 250);
+
+  // Builder commun de la query string (utilisé pour le fetch + l'export)
+  const buildSearchParams = useCallback((): URLSearchParams => {
+    const p = new URLSearchParams();
+    if (debouncedQ.trim()) p.set("q", debouncedQ.trim());
+    if (debouncedCp.trim()) p.set("cp", debouncedCp.trim());
+    if (type !== "all") p.set("types", type);
+    if (dpe.length > 0) p.set("dpe", dpe.join(","));
+    if (debouncedMinLots.trim()) p.set("minLots", debouncedMinLots.trim());
+    if (secteur) p.set("secteur", secteur);
+    if (onlyWithContact) p.set("onlyWithContact", "1");
+    if (onlyWithCoords || showMap) p.set("onlyWithCoords", "1");
+    if (showMap && bounds) {
+      p.set("minLat", String(bounds.minLat));
+      p.set("maxLat", String(bounds.maxLat));
+      p.set("minLon", String(bounds.minLon));
+      p.set("maxLon", String(bounds.maxLon));
+    }
+    return p;
+  }, [debouncedQ, debouncedCp, type, dpe, debouncedMinLots, secteur, onlyWithContact, onlyWithCoords, showMap, bounds]);
 
   const listQuery = useQuery({
     queryKey: [
@@ -79,6 +117,9 @@ export function AnnuaireBrowser() {
       debouncedQ.trim(),
       debouncedCp.trim(),
       type,
+      dpe.join(","),
+      debouncedMinLots.trim(),
+      secteur,
       onlyWithContact,
       onlyWithCoords || showMap,
       showMap && bounds
@@ -87,26 +128,28 @@ export function AnnuaireBrowser() {
       showMap ? 500 : 300,
     ],
     queryFn: ({ signal }) => {
-      const url = new URL("/api/directory", window.location.origin);
-      url.searchParams.set("limit", showMap ? "500" : "300");
-      if (debouncedQ.trim()) url.searchParams.set("q", debouncedQ.trim());
-      if (debouncedCp.trim()) url.searchParams.set("cp", debouncedCp.trim());
-      if (type !== "all") url.searchParams.set("types", type);
-      if (onlyWithContact) url.searchParams.set("onlyWithContact", "1");
-      if (onlyWithCoords || showMap) url.searchParams.set("onlyWithCoords", "1");
-      if (showMap && bounds) {
-        url.searchParams.set("minLat", String(bounds.minLat));
-        url.searchParams.set("maxLat", String(bounds.maxLat));
-        url.searchParams.set("minLon", String(bounds.minLon));
-        url.searchParams.set("maxLon", String(bounds.maxLon));
-      }
+      const p = buildSearchParams();
+      p.set("limit", showMap ? "500" : "300");
       return jsonFetcher<{ count: number; items: DirectoryRow[] }>(
-        url.toString(),
+        `/api/directory?${p.toString()}`,
         signal,
       );
     },
     placeholderData: keepPreviousData, // pas de flash à vide entre 2 fetches
   });
+
+  const exportCsv = () => {
+    const p = buildSearchParams();
+    p.set("limit", "10000");
+    // navigation directe → le navigateur télécharge
+    window.location.href = `/api/directory/export?${p.toString()}`;
+  };
+
+  const toggleDpe = (klass: string) => {
+    setDpe((prev) =>
+      prev.includes(klass) ? prev.filter((k) => k !== klass) : [...prev, klass],
+    );
+  };
 
   // Stats : très long staleTime — change rarement, peut être servi du cache
   const statsQuery = useQuery({
@@ -171,6 +214,81 @@ export function AnnuaireBrowser() {
           </select>
         </div>
 
+        {/* Filtres avancés (toggleable) */}
+        {showAdvanced ? (
+          <div className="space-y-3 rounded-md border border-border bg-secondary/30 p-3 text-xs">
+            <div>
+              <p className="mb-1.5 font-semibold uppercase tracking-wider text-muted-foreground">
+                Classe DPE
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {DPE_CLASSES.map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => toggleDpe(k)}
+                    className={
+                      "rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors " +
+                      (dpe.includes(k)
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-background hover:bg-secondary")
+                    }
+                  >
+                    {k}
+                  </button>
+                ))}
+                {dpe.length > 0 ? (
+                  <button
+                    onClick={() => setDpe([])}
+                    className="ml-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-secondary"
+                  >
+                    × Effacer
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="minLots"
+                  className="mb-1 block font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  Lots minimum (copros)
+                </label>
+                <Input
+                  id="minLots"
+                  type="number"
+                  min="0"
+                  placeholder="ex: 30"
+                  value={minLots}
+                  onChange={(e) => setMinLots(e.target.value)}
+                  className="h-8"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="secteur"
+                  className="mb-1 block font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  Secteur tertiaire
+                </label>
+                <select
+                  id="secteur"
+                  value={secteur}
+                  onChange={(e) => setSecteur(e.target.value)}
+                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="">— tous —</option>
+                  {SECTEURS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input
@@ -197,10 +315,22 @@ export function AnnuaireBrowser() {
             ) : null}
           </label>
           <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="ml-auto"
+          >
+            <Filter className="h-4 w-4" /> Filtres avancés
+            {(dpe.length + (minLots ? 1 : 0) + (secteur ? 1 : 0)) > 0 ? (
+              <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">
+                {dpe.length + (minLots ? 1 : 0) + (secteur ? 1 : 0)}
+              </span>
+            ) : null}
+          </Button>
+          <Button
             variant={showMap ? "default" : "outline"}
             size="sm"
             onClick={() => setShowMap((v) => !v)}
-            className="ml-auto"
           >
             {showMap ? (
               <>
@@ -211,6 +341,15 @@ export function AnnuaireBrowser() {
                 <MapIcon className="h-4 w-4" /> Vue carte
               </>
             )}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportCsv}
+            disabled={items.length === 0}
+            title="Exporter les résultats avec les filtres actuels (max 10 000)"
+          >
+            <Download className="h-4 w-4" /> CSV
           </Button>
           <div className="text-muted-foreground">
             <strong className="text-foreground">{items.length}</strong> affichés
@@ -350,6 +489,30 @@ function DirectoryRowCard({
           {row.display_subtitle ? (
             <p className="text-xs text-muted-foreground">{row.display_subtitle}</p>
           ) : null}
+          {(row.dpe_class || row.nb_lots || row.secteur) ? (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {row.dpe_class ? (
+                <span
+                  className={
+                    "rounded px-1.5 py-0.5 text-[10px] font-bold " +
+                    dpeClassColor(row.dpe_class)
+                  }
+                >
+                  DPE {row.dpe_class}
+                </span>
+              ) : null}
+              {row.nb_lots ? (
+                <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {row.nb_lots} lots
+                </span>
+              ) : null}
+              {row.secteur ? (
+                <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {row.secteur}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {row.address || row.postcode ? (
             <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
               <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
@@ -405,6 +568,19 @@ function DirectoryRowCard({
       </div>
     </div>
   );
+}
+
+function dpeClassColor(klass: string): string {
+  switch (klass.toUpperCase()) {
+    case "A": return "bg-emerald-200 text-emerald-900";
+    case "B": return "bg-lime-200 text-lime-900";
+    case "C": return "bg-yellow-200 text-yellow-900";
+    case "D": return "bg-amber-200 text-amber-900";
+    case "E": return "bg-orange-200 text-orange-900";
+    case "F": return "bg-rose-200 text-rose-900";
+    case "G": return "bg-red-300 text-red-950";
+    default:  return "bg-secondary text-muted-foreground";
+  }
 }
 
 function getDetailHref(row: DirectoryRow): string | null {

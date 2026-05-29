@@ -70,6 +70,8 @@ export async function ensureDirectory(): Promise<void> {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE UNIQUE INDEX IF NOT EXISTS ux_directory_entity ON directory(entity_type, entity_ref);
+    -- Indexes pour les filtres avancés annuaire (DPE class, lots, secteur)
+    -- Les colonnes elles-mêmes sont ajoutées en ALTER plus bas (idempotent).
     CREATE INDEX IF NOT EXISTS idx_directory_bbox ON directory(lat, lon);
     CREATE INDEX IF NOT EXISTS idx_directory_type ON directory(entity_type);
     CREATE INDEX IF NOT EXISTS idx_directory_parent_copro ON directory(parent_copro_id);
@@ -80,6 +82,25 @@ export async function ensureDirectory(): Promise<void> {
     -- Indexes composites pour filtres fréquents annuaire
     CREATE INDEX IF NOT EXISTS idx_directory_type_postcode ON directory(entity_type, postcode);
     CREATE INDEX IF NOT EXISTS idx_directory_type_dept ON directory(entity_type, departement);
+  `);
+
+  // ALTER idempotent : colonnes ajoutées après le déploiement initial
+  // pour les filtres avancés (DPE, nb_lots, secteur tertiaire)
+  const cols = await db.all<{ name: string }>(`PRAGMA table_info(directory)`);
+  const colSet = new Set(cols.map((c) => c.name));
+  const additions: Array<[string, string]> = [
+    ["dpe_class", "TEXT"],
+    ["nb_lots", "INTEGER"],
+    ["secteur", "TEXT"],
+  ];
+  for (const [name, type] of additions) {
+    if (!colSet.has(name)) {
+      await db.exec(`ALTER TABLE directory ADD COLUMN ${name} ${type}`);
+    }
+  }
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_directory_dpe ON directory(dpe_class);
+    CREATE INDEX IF NOT EXISTS idx_directory_secteur ON directory(secteur);
   `);
 
   // FTS5 : recherche full-text sub-10ms sur display_name + address +

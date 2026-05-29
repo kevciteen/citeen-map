@@ -25,11 +25,13 @@ const UPSERT_SQL = `
     address, postcode, city, departement, lat, lon, coords_source, coords_score,
     phone, phone_source, email, email_source, website, website_source, hours,
     parent_copro_id, parent_building_id, enriched_at,
+    dpe_class, nb_lots, secteur,
     synced_at, created_at, updated_at
   ) VALUES (
     ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?,
     ?, ?, ?,
     unixepoch(), unixepoch(), unixepoch()
   )
@@ -54,6 +56,9 @@ const UPSERT_SQL = `
     parent_copro_id = excluded.parent_copro_id,
     parent_building_id = excluded.parent_building_id,
     enriched_at = excluded.enriched_at,
+    dpe_class = excluded.dpe_class,
+    nb_lots = excluded.nb_lots,
+    secteur = excluded.secteur,
     synced_at = unixepoch(),
     updated_at = unixepoch()
 `;
@@ -80,6 +85,7 @@ type CoproRow = {
   coords_score: number | null;
   nb_lots: number | null;
   nb_lots_habitation: number | null;
+  classe_finale: string | null;
 };
 
 function buildCoproArgs(r: CoproRow): Args {
@@ -94,29 +100,28 @@ function buildCoproArgs(r: CoproRow): Args {
     r.lat, r.lon, r.coords_source, r.coords_score,
     null, null, null, null, null, null, null,
     null, null, null,
+    r.classe_finale, lots, null, // dpe_class, nb_lots, secteur (NULL pour copro)
   ];
 }
 
+const COPRO_SELECT = `
+  SELECT c.id, c.numero_immatriculation, c.nom_copro, c.adresse, c.code_postal, c.commune,
+         c.departement, c.lat, c.lon, c.coords_source, c.coords_score,
+         c.nb_lots, c.nb_lots_habitation,
+         e.classe_finale
+  FROM copros c
+  LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+`;
+
 async function syncCopros(): Promise<number> {
-  const rows = await db.all<CoproRow>(
-    `SELECT id, numero_immatriculation, nom_copro, adresse, code_postal, commune,
-            departement, lat, lon, coords_source, coords_score,
-            nb_lots, nb_lots_habitation
-     FROM copros`,
-  );
+  const rows = await db.all<CoproRow>(COPRO_SELECT);
   for (const r of rows) await upsert(buildCoproArgs(r));
   return rows.length;
 }
 
 export async function syncDirectoryCopro(coproId: number): Promise<void> {
   await ensureDirectory();
-  const row = await db.get<CoproRow>(
-    `SELECT id, numero_immatriculation, nom_copro, adresse, code_postal, commune,
-            departement, lat, lon, coords_source, coords_score,
-            nb_lots, nb_lots_habitation
-     FROM copros WHERE id = ?`,
-    [coproId],
-  );
+  const row = await db.get<CoproRow>(`${COPRO_SELECT} WHERE c.id = ?`, [coproId]);
   if (!row) return;
   await upsert(buildCoproArgs(row));
 }
@@ -142,6 +147,8 @@ type OccupantRow = {
   b_departement: string | null;
   b_lat: number | null;
   b_lon: number | null;
+  b_secteur: string | null;
+  d_etiquette_dpe: string | null;
 };
 
 function buildOccupantArgs(r: OccupantRow): Args {
@@ -162,6 +169,7 @@ function buildOccupantArgs(r: OccupantRow): Args {
     r.website, r.website ? channelSource : null,
     r.hours,
     null, r.building_id, r.contact_fetched_at,
+    r.d_etiquette_dpe, null, r.b_secteur,
   ];
 }
 
@@ -171,9 +179,11 @@ const OCCUPANT_SELECT = `
          o.contact_source, o.contact_fetched_at,
          b.adresse AS b_adresse, b.code_postal AS b_code_postal,
          b.commune AS b_commune, b.departement AS b_departement,
-         b.lat AS b_lat, b.lon AS b_lon
+         b.lat AS b_lat, b.lon AS b_lon, b.secteur AS b_secteur,
+         d.etiquette_dpe AS d_etiquette_dpe
   FROM tertiary_occupants o
   LEFT JOIN tertiary_buildings b ON b.id = o.building_id
+  LEFT JOIN tertiary_dpe d ON d.building_id = o.building_id
 `;
 
 async function syncOccupants(): Promise<number> {
@@ -268,6 +278,7 @@ function buildSyndicArgs(r: SyndicRow): Args {
     r.auto_lat, r.auto_lon, r.auto_lat != null ? "ban" : null, null,
     phone, phoneSrc, email, emailSrc, website, websiteSrc, r.auto_hours,
     null, null, r.auto_fetched_at,
+    null, null, null, // dpe_class, nb_lots, secteur (NULL pour syndic)
   ];
 }
 
@@ -310,6 +321,7 @@ async function syncProspectsCustom(): Promise<number> {
       r.custom_lat, r.custom_lon, r.custom_lat != null ? "manual" : null, null,
       null, null, null, null, null, null, null,
       null, null, null,
+      null, null, null, // dpe_class, nb_lots, secteur
     ]);
   }
   return rows.length;

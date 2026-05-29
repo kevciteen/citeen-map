@@ -313,7 +313,7 @@ export function MaisonsAddressSearch({
             <Card className="border-amber-200 bg-amber-50">
               <CardContent className="flex items-start gap-3 p-5">
                 <AlertCircle className="h-5 w-5 shrink-0 text-amber-700" />
-                <div>
+                <div className="flex-1">
                   <p className="text-sm font-bold text-amber-900">
                     Aucun DPE {typeBatiment === "appartement" ? "appartement" : "maison"} trouvé pour cette adresse
                   </p>
@@ -322,6 +322,12 @@ export function MaisonsAddressSearch({
                       <li key={i}>{n}</li>
                     ))}
                   </ul>
+                  <a
+                    href={`/dpe?q=${encodeURIComponent(query)}`}
+                    className="mt-3 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                  >
+                    🔍 Voir TOUS les DPE ADEME à cette adresse (collectifs + appartements + maisons)
+                  </a>
                 </div>
               </CardContent>
             </Card>

@@ -1,13 +1,9 @@
 /**
- * GET /api/directory
+ * GET /api/directory/export?format=csv&...filtres
  *
- * Recherche cross-entité dans l'annuaire unifié :
- *   - filtres par bbox (carte), code postal, département, type d'entité
- *   - recherche full-text simple sur display_name + address
- *   - filtre "avec contact" (phone OU email OU website non NULL) pour
- *     la prospection ciblée
- *
- * Lecture seule. Pour rafraîchir : POST /api/directory/sync.
+ * Reprend exactement les filtres de /api/directory et renvoie un CSV
+ * UTF-8 BOM (compatible Excel). Limite étendue à 10 000 lignes pour les
+ * exports de prospection larges.
  */
 import { NextRequest, NextResponse } from "next/server";
 import type { InValue } from "@libsql/client";
@@ -16,11 +12,10 @@ import { ensureAuth } from "@/lib/auth/guards";
 import { ensureDirectory } from "@/lib/db/ensure-directory";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 type DirectoryRow = {
-  id: number;
   entity_type: string;
-  entity_ref: string;
   display_name: string;
   display_subtitle: string | null;
   address: string | null;
@@ -31,17 +26,11 @@ type DirectoryRow = {
   lon: number | null;
   coords_source: string | null;
   phone: string | null;
-  phone_source: string | null;
   email: string | null;
-  email_source: string | null;
   website: string | null;
-  website_source: string | null;
-  parent_copro_id: number | null;
-  parent_building_id: number | null;
   dpe_class: string | null;
   nb_lots: number | null;
   secteur: string | null;
-  synced_at: number;
 };
 
 function num(v: string | null): number | null {
@@ -50,24 +39,31 @@ function num(v: string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  if (/[",;\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
 export async function GET(req: NextRequest) {
   const guard = await ensureAuth();
   if (guard instanceof NextResponse) return guard;
   await ensureDirectory();
 
   const sp = req.nextUrl.searchParams;
-  const limit = Math.min(Math.max(num(sp.get("limit")) ?? 200, 1), 1000);
+  const limit = Math.min(Math.max(num(sp.get("limit")) ?? 10000, 1), 10000);
   const q = sp.get("q")?.trim();
   const cp = sp.get("cp")?.trim();
   const dept = sp.get("dept")?.trim();
-  const typesParam = sp.get("types")?.trim(); // CSV : occupant,copro,syndic,prospect_custom
+  const typesParam = sp.get("types")?.trim();
   const minLat = num(sp.get("minLat"));
   const maxLat = num(sp.get("maxLat"));
   const minLon = num(sp.get("minLon"));
   const maxLon = num(sp.get("maxLon"));
   const onlyWithContact = sp.get("onlyWithContact") === "1";
   const onlyWithCoords = sp.get("onlyWithCoords") === "1";
-  const dpeParam = sp.get("dpe")?.trim()?.toUpperCase(); // CSV : A,B,C,...,NC
+  const dpeParam = sp.get("dpe")?.trim()?.toUpperCase();
   const minLots = num(sp.get("minLots"));
   const secteur = sp.get("secteur")?.trim();
 
@@ -75,9 +71,6 @@ export async function GET(req: NextRequest) {
   const params: InValue[] = [];
 
   if (q) {
-    // FTS5 prefix match : "Pari 11" → "Pari* 11*". Strip caractères qui
-    // cassent la grammaire FTS pour ne pas crasher si l'utilisateur tape
-    // une apostrophe ou parenthèse.
     const ftsQuery = q
       .replace(/["()*]/g, " ")
       .trim()
@@ -101,15 +94,11 @@ export async function GET(req: NextRequest) {
     params.push(dept);
   }
   if (typesParam) {
-    const types = typesParam
-      .split(",")
-      .map((t) => t.trim())
-      .filter((t) =>
-        ["occupant", "copro", "syndic", "prospect_custom"].includes(t),
-      );
+    const types = typesParam.split(",").map((t) => t.trim()).filter((t) =>
+      ["occupant", "copro", "syndic", "prospect_custom"].includes(t),
+    );
     if (types.length) {
-      const placeholders = types.map(() => "?").join(",");
-      where.push(`entity_type IN (${placeholders})`);
+      where.push(`entity_type IN (${types.map(() => "?").join(",")})`);
       params.push(...types);
     }
   }
@@ -118,21 +107,16 @@ export async function GET(req: NextRequest) {
     params.push(minLat, maxLat, minLon, maxLon);
   }
   if (onlyWithContact) {
-    where.push(
-      "(phone IS NOT NULL OR email IS NOT NULL OR website IS NOT NULL)",
-    );
+    where.push("(phone IS NOT NULL OR email IS NOT NULL OR website IS NOT NULL)");
   }
   if (onlyWithCoords) {
     where.push("lat IS NOT NULL AND lon IS NOT NULL");
   }
   if (dpeParam) {
-    const dpeClasses = dpeParam
-      .split(",")
-      .map((c) => c.trim().toUpperCase())
+    const dpeClasses = dpeParam.split(",").map((c) => c.trim().toUpperCase())
       .filter((c) => /^[A-G]$/.test(c) || c === "NC");
     if (dpeClasses.length > 0) {
-      const placeholders = dpeClasses.map(() => "?").join(",");
-      where.push(`COALESCE(dpe_class, 'NC') IN (${placeholders})`);
+      where.push(`COALESCE(dpe_class, 'NC') IN (${dpeClasses.map(() => "?").join(",")})`);
       params.push(...dpeClasses);
     }
   }
@@ -146,12 +130,11 @@ export async function GET(req: NextRequest) {
   }
 
   const rows = await db.all<DirectoryRow>(
-    `SELECT id, entity_type, entity_ref, display_name, display_subtitle,
+    `SELECT entity_type, display_name, display_subtitle,
             address, postcode, city, departement,
             lat, lon, coords_source,
-            phone, phone_source, email, email_source, website, website_source,
-            parent_copro_id, parent_building_id,
-            dpe_class, nb_lots, secteur, synced_at
+            phone, email, website,
+            dpe_class, nb_lots, secteur
      FROM directory
      WHERE ${where.join(" AND ")}
      ORDER BY entity_type, display_name
@@ -159,5 +142,35 @@ export async function GET(req: NextRequest) {
     [...params, limit],
   );
 
-  return NextResponse.json({ count: rows.length, limit, items: rows });
+  const headers = [
+    "type", "nom", "sous_titre",
+    "adresse", "code_postal", "commune", "departement",
+    "lat", "lon", "source_coords",
+    "telephone", "email", "site_web",
+    "dpe", "nb_lots", "secteur",
+  ];
+  const lines = [
+    headers.join(";"),
+    ...rows.map((r) =>
+      [
+        r.entity_type, r.display_name, r.display_subtitle,
+        r.address, r.postcode, r.city, r.departement,
+        r.lat, r.lon, r.coords_source,
+        r.phone, r.email, r.website,
+        r.dpe_class, r.nb_lots, r.secteur,
+      ].map(csvCell).join(";"),
+    ),
+  ];
+  // BOM UTF-8 pour qu'Excel détecte l'encodage tout seul
+  const csv = "﻿" + lines.join("\r\n");
+
+  const filename = `annuaire-${new Date().toISOString().slice(0, 10)}.csv`;
+  return new NextResponse(csv, {
+    status: 200,
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+      "cache-control": "private, no-store",
+    },
+  });
 }
