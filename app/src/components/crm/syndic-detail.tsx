@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { SyndicCoprosSection } from "@/components/crm/syndic-copros-section";
 
 type SyndicAggregate = {
   nb_copros: number;
@@ -193,6 +194,9 @@ export function SyndicDetail({ initial }: { initial: FullDetail }) {
           />
         </div>
       ) : null}
+
+      {/* COPROS GÉRÉES — section enrichie (map + table + export campagne) */}
+      <SyndicCoprosSection slug={slug} name={name} />
 
       {/* RÉPARTITION DPE */}
       {aggregate && totalDpe > 0 ? (
