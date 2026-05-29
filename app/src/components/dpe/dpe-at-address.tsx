@@ -23,7 +23,7 @@ import { DpeBadge } from "@/components/ui/dpe-badge";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { jsonFetcher } from "@/lib/fetcher";
 import { AddressAutocomplete } from "@/components/address/address-autocomplete";
-import { ExternalContactLinks } from "@/components/address/external-contact-links";
+import { ContactsScraper } from "@/components/address/contacts-scraper";
 
 type DpeKind =
   | "collectif_reel"
@@ -272,14 +272,14 @@ function ResultsView({ data, fetching }: { data: Result; fetching: boolean }) {
         </Section>
       ) : null}
 
-      {/* Section 6 : recherche externe contacts (legal-friendly, deep-links) */}
+      {/* Section 6 : recherche contacts (deep-links + scraper auto PJ/PB) */}
       <Section
         title="Rechercher des contacts à cette adresse"
-        subtitle="Particuliers + commerces + pros — sources publiques externes"
+        subtitle="Onglet 'Recherche externe' (liens) ou 'Scrap auto' (parsing PJ/PB)"
         icon={Users2}
         accent="slate"
       >
-        <ExternalContactLinks
+        <ContactsScraper
           address={streetOnly}
           cp={cp}
           city={city}
