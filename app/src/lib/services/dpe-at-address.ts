@@ -18,12 +18,19 @@
 import { geocodeAddress } from "./ban";
 import { getParcelByPoint } from "./cadastre";
 import { fetchAdemeDpeAround, type AdemeRecord } from "./ademe";
+import {
+  fetchDpeTertiaireAround,
+  isReallyTertiary,
+  extractLatLon as extractTertLatLon,
+  type DpeTertiaireRecord,
+} from "./dpe-tertiaire";
 
 export type DpeKind =
   | "collectif_reel"
   | "appartement_individuel"
   | "appartement_derive_immeuble"
   | "maison_individuelle"
+  | "tertiaire"
   | "autre";
 
 export type DpeAtAddressItem = {
@@ -65,6 +72,7 @@ export type DpeAtAddressResult = {
   appartementsIndividuels: DpeAtAddressItem[];
   appartementsDerivesImmeuble: DpeAtAddressItem[];
   maisonsIndividuelles: DpeAtAddressItem[];
+  tertiaires: DpeAtAddressItem[];
   autres: DpeAtAddressItem[];
   notes: string[];
 };
@@ -202,6 +210,7 @@ export async function lookupDpeAtAddress(
       appartementsIndividuels: [],
       appartementsDerivesImmeuble: [],
       maisonsIndividuelles: [],
+      tertiaires: [],
       autres: [],
       notes: [
         ban
@@ -220,7 +229,8 @@ export async function lookupDpeAtAddress(
     notes.push(`Parcelle IGN : ${parcelle.idu}`);
   }
 
-  // 3. ADEME geo_distance progressif
+  // 3. ADEME résidentiel (dpe03existant) + ADEME tertiaire (dpe-tertiaire)
+  //    en parallèle, rayons progressifs
   let raw: AdemeRecord[] = [];
   let usedR = 80;
   for (const r of [25, 40, 80]) {
@@ -229,8 +239,22 @@ export async function lookupDpeAtAddress(
     if (raw.length >= 5) break;
   }
   notes.push(
-    `ADEME : ${raw.length} DPE bruts dans un rayon de ${usedR}m autour du point BAN`,
+    `ADEME résidentiel : ${raw.length} DPE bruts dans un rayon de ${usedR}m`,
   );
+
+  // Tertiaire (dataset différent)
+  let rawTert: DpeTertiaireRecord[] = [];
+  try {
+    rawTert = await fetchDpeTertiaireAround({
+      lat: ban.lat,
+      lon: ban.lon,
+      radiusM: usedR,
+      size: 200,
+    });
+    notes.push(`ADEME tertiaire : ${rawTert.length} DPE bruts dans un rayon de ${usedR}m`);
+  } catch (e) {
+    notes.push(`ADEME tertiaire : erreur (${(e as Error).message})`);
+  }
 
   // 4. Filtre strict adresse — comme dans maison.ts mais SANS le filtre
   //    type_batiment qui faisait perdre des résultats.
@@ -272,6 +296,25 @@ export async function lookupDpeAtAddress(
 
   // 5. Segmentation par type ADEME canonique
   const items = matched.map(toItem);
+
+  // Tertiaire : filtre par commune (pas de tokens stricts car dataset différent)
+  const tertiaireItems: DpeAtAddressItem[] = rawTert
+    .filter((r) => {
+      if (!isReallyTertiary(r)) return false;
+      const recCp = String(r.code_postal ?? "").trim();
+      if (targetPostcode && recCp && recCp !== targetPostcode) return false;
+      const recCity = normalizeAscii(r.commune ?? "");
+      if (targetCity && recCity && recCity !== targetCity) return false;
+      // Match street tokens loose
+      const recStreet = String(r.geo_adresse ?? r.nom_rue ?? "");
+      if (targetTokens.size > 0) {
+        const overlap = tokenOverlap(targetTokens, streetTokens(recStreet));
+        if (overlap < 0.5) return false;
+      }
+      return true;
+    })
+    .map((r) => tertiaryToItem(r));
+
   const collectifsReels = items.filter((i) => i.kind === "collectif_reel");
   const appartementsIndividuels = items.filter((i) => i.kind === "appartement_individuel");
   const appartementsDerivesImmeuble = items.filter((i) => i.kind === "appartement_derive_immeuble");
@@ -288,6 +331,7 @@ export async function lookupDpeAtAddress(
   appartementsIndividuels.sort(byDateDesc);
   appartementsDerivesImmeuble.sort(byDateDesc);
   maisonsIndividuelles.sort(byDateDesc);
+  tertiaireItems.sort(byDateDesc);
   autres.sort(byDateDesc);
 
   return {
@@ -311,7 +355,35 @@ export async function lookupDpeAtAddress(
     appartementsIndividuels,
     appartementsDerivesImmeuble,
     maisonsIndividuelles,
+    tertiaires: tertiaireItems,
     autres,
     notes,
+  };
+}
+
+/** Convertit un DPE tertiaire en DpeAtAddressItem (champs différents). */
+function tertiaryToItem(r: DpeTertiaireRecord): DpeAtAddressItem {
+  const coords = extractTertLatLon(r);
+  return {
+    kind: "tertiaire",
+    numero_dpe: r.numero_dpe ?? null,
+    numero_dpe_immeuble: null,
+    etiquette_dpe: r.classe_consommation_energie ?? null,
+    etiquette_ges: r.classe_estimation_ges ?? null,
+    date_etablissement:
+      (r as Record<string, unknown>).date_etablissement_dpe as string | undefined ?? null,
+    date_modification:
+      (r as Record<string, unknown>).date_arrete_legifrance as string | undefined ?? null,
+    type_batiment: (r as Record<string, unknown>).tr002_type_batiment_libelle as string | undefined ?? "Tertiaire",
+    methode_application_dpe: r.secteur_activite ?? null,
+    numero_voie_ban: null,
+    nom_rue_ban: (r.nom_rue ?? r.geo_adresse) ?? null,
+    code_postal_ban: r.code_postal ?? null,
+    nom_commune_ban: r.commune ?? null,
+    surface_habitable:
+      Number(r.surface_utile ?? r.surface_habitable ?? r.shon ?? NaN) || null,
+    conso_5_usages_par_m2_ep: Number(r.consommation_energie ?? NaN) || null,
+    lat: coords?.lat ?? null,
+    lon: coords?.lon ?? null,
   };
 }

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Building2,
   X,
@@ -17,6 +18,7 @@ import {
   Globe,
   Mail,
   Sparkles,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -283,6 +285,13 @@ export function TertiairePanel({
       <div className="flex-1 overflow-auto p-4">
         {/* Actions principales */}
         <div className="mb-4 flex flex-wrap gap-2">
+          <Link
+            href={`/tertiaire/${building.id}`}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Ouvrir fiche détaillée
+          </Link>
           {prospect ? (
             <Badge className="gap-1.5 bg-emerald-100 text-emerald-900">
               <CheckCircle2 className="h-3 w-3" />

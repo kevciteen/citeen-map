@@ -34,10 +34,9 @@ const items = [
   { href: "/maisons", label: "Maisons individuelles", icon: Home },
   { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
-  { href: "/annuaire", label: "Annuaire unifié", icon: BookOpen },
   { href: "/dpe", label: "DPE par adresse", icon: ScanSearch },
-  { href: "/campagnes", label: "Campagnes prospection", icon: Rocket },
-  { href: "/exports", label: "Exports", icon: FileDown },
+  // Hidden temporarily : /annuaire, /campagnes, /exports
+  // (à réactiver plus tard quand les chantiers seront finalisés)
 ];
 
 export function Sidebar() {

@@ -12,10 +12,11 @@
  * fiche tertiaire, etc.
  */
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   Loader2, MapPin, Building2, Home, FileText, Info,
-  AlertTriangle, CheckCircle2, Sparkles, Users2,
+  AlertTriangle, CheckCircle2, Sparkles, Users2, Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +31,7 @@ type DpeKind =
   | "appartement_individuel"
   | "appartement_derive_immeuble"
   | "maison_individuelle"
+  | "tertiaire"
   | "autre";
 
 type DpeItem = {
@@ -64,6 +66,7 @@ type Result = {
   appartementsIndividuels: DpeItem[];
   appartementsDerivesImmeuble: DpeItem[];
   maisonsIndividuelles: DpeItem[];
+  tertiaires: DpeItem[];
   autres: DpeItem[];
   notes: string[];
 };
@@ -258,7 +261,21 @@ function ResultsView({ data, fetching }: { data: Result; fetching: boolean }) {
         </Section>
       ) : null}
 
-      {/* Section 5 : autres */}
+      {/* Section 5 : DPE TERTIAIRE (dataset différent ADEME) */}
+      {data.tertiaires.length > 0 ? (
+        <Section
+          title="DPE tertiaire (bureaux, commerces, hôtels, etc.)"
+          subtitle={`${data.tertiaires.length} DPE tertiaire(s) trouvé(s) à cette adresse — dataset dpe-tertiaire ADEME`}
+          icon={Briefcase}
+          accent="primary"
+        >
+          {data.tertiaires.map((it) => (
+            <DpeRow key={it.numero_dpe ?? Math.random()} item={it} />
+          ))}
+        </Section>
+      ) : null}
+
+      {/* Section 6 : autres */}
       {data.autres.length > 0 ? (
         <Section
           title="Autres DPE"
@@ -359,8 +376,8 @@ function DpeRow({ item }: { item: DpeItem }) {
   const date = item.date_etablissement
     ? new Date(item.date_etablissement).toLocaleDateString("fr-FR")
     : "—";
-  return (
-    <div className="flex items-center gap-3 rounded-md border border-border bg-card p-2 text-xs">
+  const content = (
+    <>
       <DpeBadge classe={item.etiquette_dpe ?? "NC"} />
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium">{addr || "Adresse non précisée"}</p>
@@ -377,6 +394,26 @@ function DpeRow({ item }: { item: DpeItem }) {
           GES <strong className="text-foreground">{item.etiquette_ges}</strong>
         </div>
       ) : null}
+      {item.numero_dpe ? (
+        <span className="ml-1 shrink-0 text-[10px] font-bold text-primary">
+          Détail →
+        </span>
+      ) : null}
+    </>
+  );
+  if (item.numero_dpe) {
+    return (
+      <Link
+        href={`/dpe/${encodeURIComponent(item.numero_dpe)}`}
+        className="flex items-center gap-3 rounded-md border border-border bg-card p-2 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+      >
+        {content}
+      </Link>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-border bg-card p-2 text-xs">
+      {content}
     </div>
   );
 }
