@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, MapPin, Globe, Network, RefreshCw, PlayCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, MapPin, Globe, Network, RefreshCw, PlayCircle, Zap, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -39,6 +39,18 @@ export function CoordsHealthBrowser() {
   const [directory, setDirectory] = useState<DirectoryStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [loopState, setLoopState] = useState<{
+    running: boolean;
+    startedPending: number;
+    processed: number;
+    byBan: number;
+    byCadastre: number;
+    unresolved: number;
+    errors: number;
+    batches: number;
+    startedAt: number;
+  } | null>(null);
+  const stopLoopRef = useRef(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -81,6 +93,103 @@ export function CoordsHealthBrowser() {
       toast.error(`Erreur : ${(e as Error).message}`);
     } finally {
       setBusy(null);
+    }
+  };
+
+  /**
+   * Boucle automatique : appelle POST /api/copros/backfill-coords par batches
+   * de 500 jusqu'à pendingBackfill = 0 (ou arrêt manuel). Met à jour le state
+   * loopState à chaque batch pour afficher la progression live.
+   */
+  const runBackfillLoop = async () => {
+    if (!coords || coords.pendingBackfill === 0) return;
+    stopLoopRef.current = false;
+    const startedPending = coords.pendingBackfill;
+    const startedAt = Date.now();
+    setLoopState({
+      running: true,
+      startedPending,
+      processed: 0,
+      byBan: 0,
+      byCadastre: 0,
+      unresolved: 0,
+      errors: 0,
+      batches: 0,
+      startedAt,
+    });
+    setBusy("backfill-loop");
+
+    let remaining = startedPending;
+    let processed = 0;
+    let byBan = 0;
+    let byCadastre = 0;
+    let unresolved = 0;
+    let errors = 0;
+    let batches = 0;
+
+    while (remaining > 0 && !stopLoopRef.current) {
+      try {
+        const r = await fetch("/api/copros/backfill-coords", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 500 }),
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          toast.error(j.error ?? "Erreur batch");
+          break;
+        }
+        const scanned = (j.scanned as number) ?? 0;
+        if (scanned === 0) {
+          // Plus rien à scanner — fin
+          remaining = 0;
+          break;
+        }
+        processed += scanned;
+        byBan += (j.byBan as number) ?? 0;
+        byCadastre += (j.byCadastre as number) ?? 0;
+        unresolved += (j.unresolved as number) ?? 0;
+        errors += (j.errors as number) ?? 0;
+        batches++;
+        remaining = Math.max(0, startedPending - processed);
+
+        setLoopState({
+          running: true,
+          startedPending,
+          processed,
+          byBan,
+          byCadastre,
+          unresolved,
+          errors,
+          batches,
+          startedAt,
+        });
+
+        // Refresh stats sans bloquer
+        void loadAll();
+      } catch (e) {
+        toast.error(`Erreur batch ${batches + 1} : ${(e as Error).message}`);
+        errors++;
+        break;
+      }
+    }
+
+    setLoopState((s) =>
+      s
+        ? { ...s, running: false, processed, byBan, byCadastre, unresolved, errors, batches }
+        : null,
+    );
+    setBusy(null);
+    await loadAll();
+
+    if (stopLoopRef.current) {
+      toast.info(`Arrêt demandé. ${processed} traités sur ${startedPending}.`);
+    } else if (errors > 0) {
+      toast.warning(`Terminé avec ${errors} erreur(s). ${processed} traités.`);
+    } else {
+      toast.success(
+        `Backfill complet : ${byBan} via BAN + ${byCadastre} cadastre, ${unresolved} non résolus (${batches} batches)`,
+      );
     }
   };
 
@@ -127,7 +236,16 @@ export function CoordsHealthBrowser() {
         </Button>
       </div>
 
-      <CoordsCopros stats={coords} busy={busy} onBackfill={runBackfillCopros} />
+      <CoordsCopros
+        stats={coords}
+        busy={busy}
+        loopState={loopState}
+        onBackfill={runBackfillCopros}
+        onLoop={runBackfillLoop}
+        onStopLoop={() => {
+          stopLoopRef.current = true;
+        }}
+      />
       <GoogleQuotaCard quota={quota} />
       <DirectoryCard
         stats={directory}
@@ -140,14 +258,32 @@ export function CoordsHealthBrowser() {
 
 /* --------------------------------- COPROS --------------------------------- */
 
+type LoopState = {
+  running: boolean;
+  startedPending: number;
+  processed: number;
+  byBan: number;
+  byCadastre: number;
+  unresolved: number;
+  errors: number;
+  batches: number;
+  startedAt: number;
+};
+
 function CoordsCopros({
   stats,
   busy,
+  loopState,
   onBackfill,
+  onLoop,
+  onStopLoop,
 }: {
   stats: CoordsStats | null;
   busy: string | null;
+  loopState: LoopState | null;
   onBackfill: (limit: number) => void;
+  onLoop: () => void;
+  onStopLoop: () => void;
 }) {
   if (!stats) {
     return (
@@ -198,27 +334,109 @@ function CoordsCopros({
         <Button
           size="sm"
           onClick={() => onBackfill(100)}
-          disabled={running || stats.pendingBackfill === 0}
+          disabled={running || stats.pendingBackfill === 0 || loopState?.running}
         >
-          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+          {running && !loopState?.running ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <PlayCircle className="h-4 w-4" />
+          )}
           Lancer 100
         </Button>
         <Button
           size="sm"
           variant="secondary"
           onClick={() => onBackfill(500)}
-          disabled={running || stats.pendingBackfill === 0}
+          disabled={running || stats.pendingBackfill === 0 || loopState?.running}
         >
-          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+          <PlayCircle className="h-4 w-4" />
           Lancer 500
         </Button>
-        {stats.pendingBackfill === 0 ? (
+        {loopState?.running ? (
+          <Button size="sm" variant="destructive" onClick={onStopLoop}>
+            <StopCircle className="h-4 w-4" /> Arrêter la boucle
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="default"
+            onClick={onLoop}
+            disabled={running || stats.pendingBackfill === 0}
+            title="Lance des batches de 500 jusqu'à épuisement de la file"
+          >
+            <Zap className="h-4 w-4" /> Tout backfiller ({stats.pendingBackfill.toLocaleString("fr-FR")})
+          </Button>
+        )}
+        {stats.pendingBackfill === 0 && !loopState?.running ? (
           <span className="self-center text-xs text-muted-foreground">
             ✓ Tout est traité
           </span>
         ) : null}
       </div>
+
+      {loopState ? (
+        <LoopProgress state={loopState} />
+      ) : null}
     </SectionCard>
+  );
+}
+
+function LoopProgress({ state }: { state: LoopState }) {
+  const pct =
+    state.startedPending > 0
+      ? Math.min(100, (state.processed / state.startedPending) * 100)
+      : 0;
+  const elapsedMs = Date.now() - state.startedAt;
+  const elapsedSec = Math.max(1, Math.round(elapsedMs / 1000));
+  const rate = state.processed > 0 ? state.processed / elapsedSec : 0;
+  const remaining = Math.max(0, state.startedPending - state.processed);
+  const etaSec = rate > 0 ? Math.round(remaining / rate) : null;
+  return (
+    <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="font-semibold">
+          {state.running ? "Backfill en cours…" : "Backfill terminé"}
+        </span>
+        <span className="text-muted-foreground">
+          {state.processed.toLocaleString("fr-FR")} /{" "}
+          {state.startedPending.toLocaleString("fr-FR")} ({pct.toFixed(0)} %)
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-secondary">
+        <div
+          className="h-full rounded-full bg-primary transition-all"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <span>
+          BAN : <strong className="text-foreground">{state.byBan}</strong>
+        </span>
+        <span>
+          Cadastre :{" "}
+          <strong className="text-foreground">{state.byCadastre}</strong>
+        </span>
+        <span>
+          Non résolus :{" "}
+          <strong className="text-foreground">{state.unresolved}</strong>
+        </span>
+        {state.errors > 0 ? (
+          <span className="text-amber-700">
+            Erreurs : <strong>{state.errors}</strong>
+          </span>
+        ) : null}
+        <span>Batches : {state.batches}</span>
+        <span>Vitesse : {rate.toFixed(1)} /s</span>
+        {state.running && etaSec !== null && etaSec > 0 ? (
+          <span>
+            ETA :{" "}
+            {etaSec >= 60
+              ? `${Math.floor(etaSec / 60)}m ${etaSec % 60}s`
+              : `${etaSec}s`}
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
