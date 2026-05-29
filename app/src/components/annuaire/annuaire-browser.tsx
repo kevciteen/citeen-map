@@ -1,12 +1,16 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Loader2, Search, MapPin, Phone, Mail, Globe, Filter,
   Building2, Briefcase, IdCard, Users, Map as MapIcon, List,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
+import { jsonFetcher } from "@/lib/fetcher";
 import {
   AnnuaireMap,
   TYPE_COLORS,
@@ -55,8 +59,6 @@ const TYPE_ICONS: Record<DirectoryRow["entity_type"], typeof Building2> = {
 };
 
 export function AnnuaireBrowser() {
-  const [items, setItems] = useState<DirectoryRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [cp, setCp] = useState("");
   const [type, setType] = useState<TypeFilter>("all");
@@ -65,17 +67,30 @@ export function AnnuaireBrowser() {
   const [showMap, setShowMap] = useState(true);
   const [bounds, setBounds] = useState<MapBounds | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
 
-  // Quand la carte est affichée, les résultats sont restreints à la bbox
-  // visible (onlyWithCoords devient implicite). Sinon = recherche full.
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
+  // Debounce 250ms sur les inputs texte : pas de fetch tant que le user
+  // tape encore. Les CP et toggles changent rarement → pas debounced.
+  const debouncedQ = useDebouncedValue(q, 250);
+  const debouncedCp = useDebouncedValue(cp, 250);
+
+  const listQuery = useQuery({
+    queryKey: [
+      "directory-list",
+      debouncedQ.trim(),
+      debouncedCp.trim(),
+      type,
+      onlyWithContact,
+      onlyWithCoords || showMap,
+      showMap && bounds
+        ? `${bounds.minLat.toFixed(4)},${bounds.maxLat.toFixed(4)},${bounds.minLon.toFixed(4)},${bounds.maxLon.toFixed(4)}`
+        : "",
+      showMap ? 500 : 300,
+    ],
+    queryFn: ({ signal }) => {
       const url = new URL("/api/directory", window.location.origin);
       url.searchParams.set("limit", showMap ? "500" : "300");
-      if (q.trim()) url.searchParams.set("q", q.trim());
-      if (cp.trim()) url.searchParams.set("cp", cp.trim());
+      if (debouncedQ.trim()) url.searchParams.set("q", debouncedQ.trim());
+      if (debouncedCp.trim()) url.searchParams.set("cp", debouncedCp.trim());
       if (type !== "all") url.searchParams.set("types", type);
       if (onlyWithContact) url.searchParams.set("onlyWithContact", "1");
       if (onlyWithCoords || showMap) url.searchParams.set("onlyWithCoords", "1");
@@ -85,21 +100,26 @@ export function AnnuaireBrowser() {
         url.searchParams.set("minLon", String(bounds.minLon));
         url.searchParams.set("maxLon", String(bounds.maxLon));
       }
+      return jsonFetcher<{ count: number; items: DirectoryRow[] }>(
+        url.toString(),
+        signal,
+      );
+    },
+    placeholderData: keepPreviousData, // pas de flash à vide entre 2 fetches
+  });
 
-      const [listRes, statsRes] = await Promise.all([
-        fetch(url.toString()).then((r) => r.json()).catch(() => null),
-        fetch("/api/directory/stats").then((r) => r.json()).catch(() => null),
-      ]);
-      if (listRes && !listRes.error) setItems(listRes.items ?? []);
-      if (statsRes && !statsRes.error) setTotal(statsRes.total ?? 0);
-    } finally {
-      setLoading(false);
-    }
-  }, [q, cp, type, onlyWithContact, onlyWithCoords, showMap, bounds]);
+  // Stats : très long staleTime — change rarement, peut être servi du cache
+  const statsQuery = useQuery({
+    queryKey: ["directory-stats"],
+    queryFn: ({ signal }) =>
+      jsonFetcher<{ total: number }>("/api/directory/stats", signal),
+    staleTime: 60 * 1000,
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const items: DirectoryRow[] = listQuery.data?.items ?? [];
+  const total = statsQuery.data?.total ?? null;
+  const isFetching = listQuery.isFetching;
+  const isInitialLoad = listQuery.isPending;
 
   // Points pour la carte = items ayant des coordonnées
   const mapPoints: AnnuaireMapPoint[] = items
@@ -193,20 +213,13 @@ export function AnnuaireBrowser() {
             )}
           </Button>
           <div className="text-muted-foreground">
-            {loading ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Chargement…
-              </span>
-            ) : (
-              <>
-                <strong className="text-foreground">{items.length}</strong>{" "}
-                affichés
-                {total !== null ? (
-                  <span> · {total.toLocaleString("fr-FR")} en annuaire</span>
-                ) : null}
-              </>
-            )}
+            <strong className="text-foreground">{items.length}</strong> affichés
+            {total !== null ? (
+              <span> · {total.toLocaleString("fr-FR")} en annuaire</span>
+            ) : null}
+            {isFetching && !isInitialLoad ? (
+              <Loader2 className="ml-1.5 inline h-3 w-3 animate-spin text-muted-foreground" />
+            ) : null}
           </div>
         </div>
       </div>
@@ -238,7 +251,25 @@ export function AnnuaireBrowser() {
       ) : null}
 
       {/* Résultats */}
-      {!loading && items.length === 0 ? (
+      {isInitialLoad ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex gap-3 rounded-lg border border-border bg-card p-3 shadow-sm"
+            >
+              <Skeleton className="h-8 w-8 shrink-0 rounded-md" />
+              <div className="flex-1 space-y-1.5">
+                <Skeleton className="h-3.5 w-2/3" />
+                <Skeleton className="h-3 w-1/3" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {!isInitialLoad && items.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
           <Filter className="mx-auto mb-2 h-5 w-5" />
           Aucun résultat.{" "}
@@ -257,18 +288,20 @@ export function AnnuaireBrowser() {
         </div>
       ) : null}
 
-      <div className="space-y-2">
-        {items.map((r) => {
-          const key = `${r.entity_type}-${r.entity_ref}`;
-          return (
-            <DirectoryRowCard
-              key={key}
-              row={r}
-              highlighted={highlighted === key}
-            />
-          );
-        })}
-      </div>
+      {!isInitialLoad ? (
+        <div className="space-y-2">
+          {items.map((r) => {
+            const key = `${r.entity_type}-${r.entity_ref}`;
+            return (
+              <DirectoryRowCard
+                key={key}
+                row={r}
+                highlighted={highlighted === key}
+              />
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

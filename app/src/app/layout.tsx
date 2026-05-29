@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
+import { QueryProvider } from "@/components/providers/query-provider";
 
 export const metadata: Metadata = {
   title: "Citeen — CRM Prospection Copropriétés",
@@ -15,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         className="bg-background font-sans antialiased"
         style={{ height: "100vh", margin: 0, overflow: "hidden" }}
       >
-        {children}
+        <QueryProvider>{children}</QueryProvider>
         <Toaster richColors position="top-right" />
       </body>
     </html>

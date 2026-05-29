@@ -69,9 +69,22 @@ export async function GET(req: NextRequest) {
   const params: InValue[] = [];
 
   if (q) {
-    where.push("(LOWER(display_name) LIKE ? OR LOWER(address) LIKE ?)");
-    const s = `%${q.toLowerCase()}%`;
-    params.push(s, s);
+    // FTS5 prefix match : "Pari 11" → "Pari* 11*". Strip caractères qui
+    // cassent la grammaire FTS pour ne pas crasher si l'utilisateur tape
+    // une apostrophe ou parenthèse.
+    const ftsQuery = q
+      .replace(/["()*]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((t) => `${t}*`)
+      .join(" ");
+    if (ftsQuery.length > 0) {
+      where.push(
+        "id IN (SELECT rowid FROM directory_fts WHERE directory_fts MATCH ?)",
+      );
+      params.push(ftsQuery);
+    }
   }
   if (cp) {
     where.push("postcode LIKE ?");

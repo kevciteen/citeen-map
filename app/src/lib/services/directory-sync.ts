@@ -9,7 +9,7 @@
  * via /api/directory/sync (admin) ou ponctuellement après un import.
  */
 import { db } from "@/lib/db/client";
-import { ensureDirectory } from "@/lib/db/ensure-directory";
+import { ensureDirectory, rebuildDirectoryFts } from "@/lib/db/ensure-directory";
 
 export type DirectorySyncResult = {
   copros: number;
@@ -323,6 +323,10 @@ export async function syncDirectoryAll(): Promise<DirectorySyncResult> {
   const occupants = await syncOccupants();
   const syndics = await syncSyndics();
   const prospectsCustom = await syncProspectsCustom();
+  // Sécurise l'index FTS : les triggers couvrent les écritures live, mais on
+  // rebuild après une sync complète pour rattraper d'éventuelles lignes
+  // antérieures à la création du virtual table.
+  await rebuildDirectoryFts().catch(() => {});
   return {
     copros,
     occupants,

@@ -76,6 +76,67 @@ export async function ensureDirectory(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_directory_parent_building ON directory(parent_building_id);
     CREATE INDEX IF NOT EXISTS idx_directory_postcode ON directory(postcode);
     CREATE INDEX IF NOT EXISTS idx_directory_synced ON directory(synced_at);
+
+    -- Indexes composites pour filtres fréquents annuaire
+    CREATE INDEX IF NOT EXISTS idx_directory_type_postcode ON directory(entity_type, postcode);
+    CREATE INDEX IF NOT EXISTS idx_directory_type_dept ON directory(entity_type, departement);
   `);
+
+  // FTS5 : recherche full-text sub-10ms sur display_name + address +
+  // city + postcode. Évite les LIKE '%x%' qui font full-scan sur 100k+ rows.
+  // Synchronisée via triggers AFTER INSERT/UPDATE/DELETE sur directory.
+  await db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS directory_fts USING fts5(
+      display_name,
+      address,
+      city,
+      postcode,
+      content='directory',
+      content_rowid='id',
+      tokenize='unicode61 remove_diacritics 2'
+    );
+  `);
+  await db.exec(`
+    CREATE TRIGGER IF NOT EXISTS directory_fts_ai AFTER INSERT ON directory BEGIN
+      INSERT INTO directory_fts(rowid, display_name, address, city, postcode)
+      VALUES (new.id,
+              COALESCE(new.display_name, ''),
+              COALESCE(new.address, ''),
+              COALESCE(new.city, ''),
+              COALESCE(new.postcode, ''));
+    END;
+    CREATE TRIGGER IF NOT EXISTS directory_fts_ad AFTER DELETE ON directory BEGIN
+      INSERT INTO directory_fts(directory_fts, rowid, display_name, address, city, postcode)
+      VALUES('delete', old.id,
+             COALESCE(old.display_name, ''),
+             COALESCE(old.address, ''),
+             COALESCE(old.city, ''),
+             COALESCE(old.postcode, ''));
+    END;
+    CREATE TRIGGER IF NOT EXISTS directory_fts_au AFTER UPDATE ON directory BEGIN
+      INSERT INTO directory_fts(directory_fts, rowid, display_name, address, city, postcode)
+      VALUES('delete', old.id,
+             COALESCE(old.display_name, ''),
+             COALESCE(old.address, ''),
+             COALESCE(old.city, ''),
+             COALESCE(old.postcode, ''));
+      INSERT INTO directory_fts(rowid, display_name, address, city, postcode)
+      VALUES (new.id,
+              COALESCE(new.display_name, ''),
+              COALESCE(new.address, ''),
+              COALESCE(new.city, ''),
+              COALESCE(new.postcode, ''));
+    END;
+  `);
+
   ensured = true;
+}
+
+/**
+ * Reconstruit l'index FTS depuis le contenu actuel de directory.
+ * À appeler après une grosse sync si on suspecte une désync FTS↔directory.
+ */
+export async function rebuildDirectoryFts(): Promise<void> {
+  await ensureDirectory();
+  await db.exec(`INSERT INTO directory_fts(directory_fts) VALUES('rebuild')`);
 }
