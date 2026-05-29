@@ -4,6 +4,7 @@
   "buildCommand": "cd app && npm install --include=dev && npm run build",
   "installCommand": "echo 'install happens in buildCommand'",
   "outputDirectory": "app/.next",
+  "regions": ["fra1"],
   "crons": [
     { "path": "/api/cron/relances", "schedule": "0 7 * * *" },
     { "path": "/api/cron/backup", "schedule": "0 3 * * *" },
