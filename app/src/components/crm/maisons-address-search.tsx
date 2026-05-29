@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ContactsScraper } from "@/components/address/contacts-scraper";
 import Link from "next/link";
 import { Loader2, MapPin, Home, Building, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -310,27 +311,44 @@ export function MaisonsAddressSearch({
 
           {/* Matched DPE cards */}
           {result.matched.length === 0 ? (
-            <Card className="border-amber-200 bg-amber-50">
-              <CardContent className="flex items-start gap-3 p-5">
-                <AlertCircle className="h-5 w-5 shrink-0 text-amber-700" />
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-amber-900">
-                    Aucun DPE {typeBatiment === "appartement" ? "appartement" : "maison"} trouvé pour cette adresse
-                  </p>
-                  <ul className="mt-2 space-y-1 text-[11px] text-amber-800">
-                    {result.notes.map((n, i) => (
-                      <li key={i}>{n}</li>
-                    ))}
-                  </ul>
-                  <a
-                    href={`/dpe?q=${encodeURIComponent(query)}`}
-                    className="mt-3 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100"
-                  >
-                    🔍 Voir TOUS les DPE ADEME à cette adresse (collectifs + appartements + maisons)
-                  </a>
-                </div>
-              </CardContent>
-            </Card>
+            <>
+              <Card className="border-amber-200 bg-amber-50">
+                <CardContent className="flex items-start gap-3 p-5">
+                  <AlertCircle className="h-5 w-5 shrink-0 text-amber-700" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-amber-900">
+                      Aucun DPE {typeBatiment === "appartement" ? "appartement" : "maison"} trouvé pour cette adresse
+                    </p>
+                    <ul className="mt-2 space-y-1 text-[11px] text-amber-800">
+                      {result.notes.map((n, i) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                    <a
+                      href={`/dpe?q=${encodeURIComponent(query)}`}
+                      className="mt-3 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                    >
+                      🔍 Voir TOUS les DPE ADEME à cette adresse (collectifs + appartements + maisons)
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+              {/* SCRAPER INLINE : pour trouver les contacts particuliers + pros */}
+              {result.banResolved ? (
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="mb-3 text-sm font-bold">
+                      Trouver les contacts à cette adresse
+                    </p>
+                    <ContactsScraper
+                      address={result.banResolved.street ?? result.banResolved.label.replace(/\s+\d{5}\s+.+$/, "").trim()}
+                      cp={result.banResolved.postcode}
+                      city={result.banResolved.city}
+                    />
+                  </CardContent>
+                </Card>
+              ) : null}
+            </>
           ) : (
             result.matched.map((m, i) => (
               <MaisonResultCard

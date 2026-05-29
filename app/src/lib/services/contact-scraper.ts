@@ -61,25 +61,28 @@ export type ScrapeResult = {
 
 /* ============================== FETCH ============================== */
 
-async function fetchHtml(url: string): Promise<{ html: string; via: "direct" | "scrapingbee" }> {
+async function fetchHtml(url: string): Promise<{ html: string; via: "direct" | "scrapingbee"; statusCode: number }> {
   const sbKey = process.env.SCRAPINGBEE_API_KEY;
   if (sbKey) {
-    // ScrapingBee : render_js=true + premium_proxy=true bypass Cloudflare
     const sbUrl = new URL("https://app.scrapingbee.com/api/v1/");
     sbUrl.searchParams.set("api_key", sbKey);
     sbUrl.searchParams.set("url", url);
     sbUrl.searchParams.set("render_js", "true");
     sbUrl.searchParams.set("premium_proxy", "true");
     sbUrl.searchParams.set("country_code", "fr");
+    // ★ Accepte les status codes non-2xx du site cible (pour parser
+    //   le HTML quand PJ retourne 404 avec page "aucun résultat")
+    sbUrl.searchParams.set("transparent_status_code", "true");
     const r = await fetch(sbUrl, { headers: { accept: "text/html" } });
-    if (!r.ok) {
-      const body = await r.text().catch(() => "");
+    const body = await r.text();
+    // Vraies erreurs ScrapingBee (5xx, 401, quota) → throw
+    if (r.status >= 500 || r.status === 401 || r.status === 429) {
       throw new Error(`ScrapingBee HTTP ${r.status} — ${body.slice(0, 200)}`);
     }
-    return { html: await r.text(), via: "scrapingbee" };
+    // 4xx avec HTML body = réponse du site cible → on essaie quand même de parser
+    return { html: body, via: "scrapingbee", statusCode: r.status };
   }
 
-  // Fallback fetch direct (risque blocage IP datacenter + Cloudflare)
   const r = await fetch(url, {
     headers: {
       "User-Agent": pickUA(),
@@ -92,10 +95,12 @@ async function fetchHtml(url: string): Promise<{ html: string; via: "direct" | "
       "Sec-Fetch-Site": "none",
     },
   });
-  if (!r.ok) {
+  const body = await r.text();
+  // En direct, 5xx = vraie erreur, mais on garde 4xx avec body
+  if (r.status >= 500) {
     throw new Error(`HTTP ${r.status} (sans ScrapingBee — probablement blocage)`);
   }
-  return { html: await r.text(), via: "direct" };
+  return { html: body, via: "direct", statusCode: r.status };
 }
 
 /* ============================== URL BUILDERS ============================== */
@@ -107,9 +112,12 @@ function buildPagesJaunesUrl(opts: {
   name?: string | null;
 }): string {
   const u = new URL("https://www.pagesjaunes.fr/recherche/");
-  const quoiqui = opts.name?.trim() || "";
+  // ★ PJ exige `quoiqui` non-vide (sinon 404). Si l'user ne précise pas
+  //   d'activité, on cherche toutes les entreprises à l'adresse via
+  //   un terme générique large.
+  const quoiqui = opts.name?.trim() || "entreprise";
   const ou = [opts.address, opts.cp, opts.city].filter(Boolean).join(" ").trim();
-  if (quoiqui) u.searchParams.set("quoiqui", quoiqui);
+  u.searchParams.set("quoiqui", quoiqui);
   if (ou) u.searchParams.set("ou", ou);
   return u.toString();
 }
@@ -337,13 +345,25 @@ export async function scrapeContacts(opts: {
   if (cached) return { ...cached, cached: true };
 
   try {
-    const { html, via } = await fetchHtml(url);
+    const { html, via, statusCode } = await fetchHtml(url);
     const items =
       opts.source === "pj"
         ? parsePagesJaunes(html)
         : opts.source === "pb"
           ? parsePagesBlanches(html)
           : parse118000(html);
+    let errorMsg: string | null = null;
+    if (items.length === 0) {
+      if (statusCode === 404) {
+        errorMsg = `Site cible renvoie 404 (aucun résultat trouvé pour cette requête sur ${opts.source === "pj" ? "Pages Jaunes" : opts.source === "pb" ? "Pages Blanches" : "118000"})`;
+      } else if (statusCode >= 400) {
+        errorMsg = `Site cible HTTP ${statusCode} — probable blocage ou page d'erreur`;
+      } else if (html.length < 5000) {
+        errorMsg = `Réponse vide ou très courte (${html.length} caractères) — probable challenge Cloudflare`;
+      } else {
+        errorMsg = "0 contacts parsés — sélecteurs HTML ont peut-être changé, voir l'URL source";
+      }
+    }
     const result: ScrapeResult = {
       source: opts.source,
       cached: false,
@@ -351,9 +371,7 @@ export async function scrapeContacts(opts: {
       url,
       htmlLength: html.length,
       items,
-      error: items.length === 0
-        ? "0 résultats — Cloudflare bloque probablement (set SCRAPINGBEE_API_KEY) ou sélecteurs HTML ont changé"
-        : null,
+      error: errorMsg,
     };
     await setCached(cacheKey, result, items.length > 0 ? CACHE_TTL_MS : NEGATIVE_TTL_MS);
     return result;
