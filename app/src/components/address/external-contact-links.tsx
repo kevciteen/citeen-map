@@ -43,14 +43,16 @@ function buildLinks(opts: {
     {
       label: "Pages Blanches",
       icon: BookOpen,
-      href: `https://www.pagesjaunes.fr/pagesblanches/recherche?quoiqui=&ou=${enc(adresseFull)}`,
-      note: "Particuliers — nom + téléphone",
+      // PB nécessite un nom dans quoiqui, sinon page d'accueil vide
+      href: `https://www.pagesjaunes.fr/pagesblanches/recherche?quoiqui=particulier&ou=${enc(adresseFull)}`,
+      note: "Particuliers — saisir un nom dans la barre",
     },
     {
       label: "Pages Jaunes",
       icon: Briefcase,
-      href: `https://www.pagesjaunes.fr/recherche/?quoiqui=&ou=${enc(adresseFull)}`,
-      note: "Commerçants / pros à proximité",
+      // PJ exige quoiqui non-vide sinon 404 / formulaire vide
+      href: `https://www.pagesjaunes.fr/recherche/?quoiqui=entreprise&ou=${enc(adresseFull)}`,
+      note: "Entreprises présentes à l'adresse",
     },
     {
       label: "Annuaire Inversé",

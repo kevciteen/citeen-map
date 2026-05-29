@@ -341,7 +341,12 @@ export function MaisonsAddressSearch({
                       Trouver les contacts à cette adresse
                     </p>
                     <ContactsScraper
-                      address={result.banResolved.street ?? result.banResolved.label.replace(/\s+\d{5}\s+.+$/, "").trim()}
+                      address={
+                        // ★ Adresse EXACTE = numéro + rue, pas juste la rue
+                        result.banResolved.housenumber && result.banResolved.street
+                          ? `${result.banResolved.housenumber} ${result.banResolved.street}`
+                          : result.banResolved.label.replace(/\s+\d{5}\s+.+$/, "").trim()
+                      }
                       cp={result.banResolved.postcode}
                       city={result.banResolved.city}
                     />

@@ -8,7 +8,7 @@
  * Utilisé sur les fiches copro / DPE pour trouver les contacts à
  * une adresse en quelques clics.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Search, Loader2, Phone, Mail, Globe, MapPin, AlertTriangle,
@@ -51,43 +51,66 @@ export function ContactsScraper({
   cp?: string | null;
   city?: string | null;
 }) {
-  const [tab, setTab] = useState<"external" | "scrape">("external");
+  // ★ Default = "scrape" : les résultats remontent directement dans le CRM,
+  //   pas de redirection vers un site externe
+  const [tab, setTab] = useState<"external" | "scrape">("scrape");
   const [name, setName] = useState("");
   const [pjResult, setPjResult] = useState<ScrapeResult | null>(null);
   const [pbResult, setPbResult] = useState<ScrapeResult | null>(null);
   const [r118Result, setR118Result] = useState<ScrapeResult | null>(null);
+  const autoTriggeredRef = useRef<string | null>(null);
 
-  const scrapeMutation = useMutation({
-    mutationFn: async (source: ScrapeSource): Promise<ScrapeResult> => {
-      const r = await fetch("/api/contacts/scrape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source,
-          address,
-          cp,
-          city,
-          name: name.trim() || undefined,
-        }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error ?? "Erreur scraper");
-      return j;
-    },
-    onSuccess: (data) => {
-      if (data.source === "pj") setPjResult(data);
-      else if (data.source === "pb") setPbResult(data);
-      else if (data.source === "118") setR118Result(data);
-      if (data.error) {
-        toast.warning(data.error);
-      } else if (data.items.length > 0) {
-        toast.success(`${data.items.length} contact(s) trouvé(s)`);
-      } else {
-        toast.info("0 résultat parsé");
-      }
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
+  const makeMutation = (target: ScrapeSource) =>
+    useMutation({
+      mutationFn: async (): Promise<ScrapeResult> => {
+        const r = await fetch("/api/contacts/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: target,
+            address,
+            cp,
+            city,
+            name: name.trim() || undefined,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? "Erreur scraper");
+        return j;
+      },
+      onSuccess: (data: ScrapeResult) => {
+        if (data.source === "pj") setPjResult(data);
+        else if (data.source === "pb") setPbResult(data);
+        else if (data.source === "118") setR118Result(data);
+        if (data.items.length > 0) {
+          toast.success(`${labelOf(data.source)} : ${data.items.length} contact(s)`);
+        }
+      },
+      onError: (e: Error) => {
+        toast.error(`${labelOf(target)} : ${e.message}`);
+      },
+    });
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const pjMutation = makeMutation("pj");
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const pbMutation = makeMutation("pb");
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const r118Mutation = makeMutation("118");
+
+  // ★ Auto-déclenche PJ + 118 au montage en PARALLÈLE (le cache 7j côté
+  //   serveur évite de consommer du crédit ScrapingBee en multi-visite).
+  useEffect(() => {
+    const key = `${address}|${cp}|${city}`;
+    if (!address || autoTriggeredRef.current === key) return;
+    autoTriggeredRef.current = key;
+    const t = window.setTimeout(() => {
+      pjMutation.mutate();
+      r118Mutation.mutate();
+    }, 100);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, cp, city]);
 
   return (
     <div className="space-y-3">
@@ -141,41 +164,41 @@ export function ContactsScraper({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => scrapeMutation.mutate("pj")}
-              disabled={scrapeMutation.isPending}
+              onClick={() => pjMutation.mutate()}
+              disabled={pjMutation.isPending}
             >
-              {scrapeMutation.isPending && scrapeMutation.variables === "pj" ? (
+              {pjMutation.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Building className="h-3.5 w-3.5" />
               )}
-              Pages Jaunes (B2B)
+              {pjResult ? "Re-scrap Pages Jaunes" : "Pages Jaunes (B2B)"}
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => scrapeMutation.mutate("pb")}
-              disabled={scrapeMutation.isPending}
+              onClick={() => pbMutation.mutate()}
+              disabled={pbMutation.isPending}
             >
-              {scrapeMutation.isPending && scrapeMutation.variables === "pb" ? (
+              {pbMutation.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Users2 className="h-3.5 w-3.5" />
               )}
-              Pages Blanches (B2C — mieux avec nom)
+              Pages Blanches (B2C — saisir un nom)
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => scrapeMutation.mutate("118")}
-              disabled={scrapeMutation.isPending}
+              onClick={() => r118Mutation.mutate()}
+              disabled={r118Mutation.isPending}
             >
-              {scrapeMutation.isPending && scrapeMutation.variables === "118" ? (
+              {r118Mutation.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <BookOpenText className="h-3.5 w-3.5" />
               )}
-              118000 (par adresse — recommandé pour particuliers)
+              {r118Result ? "Re-scrap 118000" : "118000 (par adresse)"}
             </Button>
           </div>
 
@@ -185,18 +208,10 @@ export function ContactsScraper({
               title="Pages Jaunes (entreprises / commerces)"
               icon={Building}
               result={pjResult}
-              onRefresh={() => scrapeMutation.mutate("pj")}
+              onRefresh={() => pjMutation.mutate()}
             />
-          ) : null}
-
-          {/* Résultats PB */}
-          {pbResult ? (
-            <ResultBlock
-              title="Pages Blanches (particuliers)"
-              icon={Users2}
-              result={pbResult}
-              onRefresh={() => scrapeMutation.mutate("pb")}
-            />
+          ) : pjMutation.isPending ? (
+            <LoadingBlock title="Pages Jaunes" icon={Building} />
           ) : null}
 
           {/* Résultats 118000 */}
@@ -205,12 +220,51 @@ export function ContactsScraper({
               title="118000.fr (recherche par adresse)"
               icon={BookOpenText}
               result={r118Result}
-              onRefresh={() => scrapeMutation.mutate("118")}
+              onRefresh={() => r118Mutation.mutate()}
             />
+          ) : r118Mutation.isPending ? (
+            <LoadingBlock title="118000.fr (par adresse)" icon={BookOpenText} />
+          ) : null}
+
+          {/* Résultats PB (button-only — manuel) */}
+          {pbResult ? (
+            <ResultBlock
+              title="Pages Blanches (particuliers)"
+              icon={Users2}
+              result={pbResult}
+              onRefresh={() => pbMutation.mutate()}
+            />
+          ) : pbMutation.isPending ? (
+            <LoadingBlock title="Pages Blanches" icon={Users2} />
           ) : null}
         </div>
       )}
     </div>
+  );
+}
+
+function labelOf(s: ScrapeSource): string {
+  return s === "pj" ? "Pages Jaunes" : s === "pb" ? "Pages Blanches" : "118000";
+}
+
+function LoadingBlock({
+  title,
+  icon: Icon,
+}: {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+}) {
+  return (
+    <section className="rounded-lg border border-border bg-card p-3">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold">
+        <Icon className="h-3.5 w-3.5 text-primary" />
+        {title}
+        <Loader2 className="ml-2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        <span className="text-[10px] font-normal text-muted-foreground">
+          Recherche en cours…
+        </span>
+      </div>
+    </section>
   );
 }
 
