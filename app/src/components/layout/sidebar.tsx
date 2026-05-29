@@ -17,6 +17,7 @@ import {
   KeyRound,
   BookOpen,
   Activity,
+  ScanSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CiteenLogoWordmark } from "@/components/layout/citeen-logo";
@@ -31,6 +32,7 @@ const items = [
   { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
   { href: "/annuaire", label: "Annuaire unifié", icon: BookOpen },
+  { href: "/dpe", label: "DPE par adresse", icon: ScanSearch },
   { href: "/exports", label: "Exports", icon: FileDown },
 ];
 

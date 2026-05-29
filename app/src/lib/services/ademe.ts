@@ -10,6 +10,12 @@ export type AdemeRecord = {
   numero_immatriculation_copropriete?: string;
   type_dpe?: string;
   type_dpe_batiment?: string;
+  type_batiment?: string;
+  // ★ Champ canonique ADEME post-2021 :
+  //   "dpe immeuble collectif" / "dpe appartement individuel" /
+  //   "dpe appartement généré à partir des données DPE immeuble" /
+  //   "dpe maison individuelle"
+  methode_application_dpe?: string;
   date_etablissement_dpe?: string;
   date_derniere_modification_dpe?: string;
   etiquette_dpe?: string;

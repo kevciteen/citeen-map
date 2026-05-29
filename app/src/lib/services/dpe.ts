@@ -393,26 +393,30 @@ function consoToClasse(conso: number | null): string {
 }
 
 function isCollectifRecord(d: AdemeRecord): boolean {
+  // ★ Source de vérité ADEME : champ `methode_application_dpe`.
+  //   - "dpe immeuble collectif"                                  → VRAI collectif
+  //   - "dpe appartement généré à partir des données DPE immeuble" → indiv dérivé
+  //   - "dpe appartement individuel"                              → indiv vrai
+  //   - "dpe maison individuelle"                                 → maison
+  // C'est plus fiable que les champs legacy type_dpe / type_batiment.
+  const meth = String(d?.methode_application_dpe || "").toLowerCase();
+  if (meth.includes("immeuble collectif")) return true;
+  // "appartement généré à partir des données DPE immeuble" = un app dérivé
+  // d'un DPE immeuble parent. Ce n'est PAS le DPE immeuble lui-même.
+  if (meth.includes("appartement") || meth.includes("maison")) return false;
+
+  // Fallback legacy si methode_application_dpe absent : ancienne heuristique
   const t = String(d?.type_dpe || d?.type_dpe_batiment || "").toUpperCase();
   const tb = String(d?.type_batiment || "").toUpperCase();
 
-  // 1) Exclusions explicites : un DPE de logement individuel n'est jamais
-  //    un DPE collectif d'immeuble, même si numero_dpe_immeuble est rempli
-  //    (référence parent).
+  // Exclusions explicites
   if (tb === "APPARTEMENT" || tb === "MAISON") return false;
-  // "DPE 6.2 logement habitation individuelle" / "DPE 6.3 logement collectif"
-  // (= un appartement dans un collectif) contiennent "LOGEMENT" mais ne sont
-  // PAS un DPE d'immeuble entier. On les exclut sauf si le type_dpe
-  // mentionne explicitement IMMEUBLE.
   if (t.includes("LOGEMENT") && !t.includes("IMMEUBLE")) return false;
 
-  // 2) Inclusions claires
+  // Inclusions claires
   if (tb === "IMMEUBLE") return true;
   if (t.includes("IMMEUBLE")) return true;
-  // "COLLECTIF" sans "LOGEMENT" : c'est un DPE d'immeuble collectif
   if (t.includes("COLLECTIF")) return true;
-  // numero_dpe_immeuble rempli et pas de type explicitement individuel
-  // → probablement un DPE immeuble (par défaut tolérant)
   if (d?.numero_dpe_immeuble) return true;
   if (d?.numero_dpe_immeuble_associe) return true;
 

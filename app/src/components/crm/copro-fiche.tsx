@@ -26,6 +26,7 @@ import { SimilarsCard } from "@/components/crm/similars-card";
 import { CoproStreetView } from "@/components/crm/copro-streetview";
 import { CeeCoproPostes } from "@/components/crm/cee-copro-postes";
 import { CoproSyndicContacts } from "@/components/crm/copro-syndic-contacts";
+import { DpeAtAddress } from "@/components/dpe/dpe-at-address";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -449,18 +450,44 @@ export function CoproFiche({
                 </div>
               ) : null}
             <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-              <div className="flex flex-col items-center justify-center rounded-xl bg-secondary/40 p-6 text-center">
-                <DpeBadge classe={details.immeubleFinal.classe} size="lg" className="!h-16 !min-w-[64px] !text-3xl" />
-                <p className="mt-3 text-xs uppercase tracking-wider text-muted-foreground">
-                  {details.immeubleFinal.statut === "reel"
-                    ? "DPE collectif réel"
+              <div
+                className={
+                  "flex flex-col items-center justify-center rounded-xl p-6 text-center " +
+                  (details.immeubleFinal.statut === "reel"
+                    ? "border-2 border-emerald-400 bg-emerald-50"
                     : details.immeubleFinal.statut === "simule"
-                      ? "Estimation immeuble"
-                      : "Aucune donnée"}
-                </p>
-                <p className="mt-1 text-[11px] font-semibold text-foreground/80">
+                      ? "border-2 border-amber-300 bg-amber-50"
+                      : "border border-border bg-secondary/40")
+                }
+              >
+                <DpeBadge classe={details.immeubleFinal.classe} size="lg" className="!h-16 !min-w-[64px] !text-3xl" />
+                {details.immeubleFinal.statut === "reel" ? (
+                  <span className="mt-3 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                    ✅ DPE collectif RÉEL ADEME
+                  </span>
+                ) : details.immeubleFinal.statut === "simule" ? (
+                  <span className="mt-3 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                    ⚠️ ESTIMATION simulée
+                  </span>
+                ) : (
+                  <span className="mt-3 inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Aucune donnée
+                  </span>
+                )}
+                <p className="mt-2 text-[11px] font-semibold text-foreground/80">
                   {details.immeubleFinal.confiance.label}
                 </p>
+                {details.immeubleFinal.statut === "simule" ? (
+                  <p className="mt-1 px-1 text-[10px] leading-tight text-amber-900">
+                    Calculé à partir de {details.immeubleSimule?.nbDpeUtilises ?? "?"} DPE individuels —{" "}
+                    <strong>pas un vrai diagnostic d&apos;immeuble</strong>.
+                  </p>
+                ) : null}
+                {details.immeubleFinal.statut === "reel" && details.collectifReel?.numero ? (
+                  <p className="mt-1 px-1 font-mono text-[9px] text-emerald-900">
+                    DPE n° {details.collectifReel.numero}
+                  </p>
+                ) : null}
                 <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
                   <div
                     className="h-1.5 w-20 overflow-hidden rounded-full bg-secondary"
@@ -693,6 +720,30 @@ export function CoproFiche({
 
       {/* CONTACTS SYNDIC (Sirene + auto OSM/Google + manuel) */}
       <CoproSyndicContacts syndicName={copro.syndic ?? null} />
+
+      {/* INVENTAIRE DPE ADEME À L'ADRESSE (reflet exhaustif) */}
+      {copro.adresse ? (
+        <Card className="print:shadow-none">
+          <CardHeader>
+            <CardTitle className="text-sm">
+              Inventaire DPE ADEME à cette adresse
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              Reflet exhaustif des DPE publiés à l&apos;adresse exacte —
+              sectionnés par type ADEME canonique. Permet de retrouver les
+              DPE collectifs réels et les diagnostics individuels qui
+              n&apos;apparaissent pas dans l&apos;estimation moyennée
+              ci-dessus.
+            </p>
+            <DpeAtAddress
+              initialQuery={`${copro.adresse}${copro.code_postal ? ` ${copro.code_postal}` : ""}${copro.commune ? ` ${copro.commune}` : ""}`}
+              autoSearch
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* DPE INDIVIDUELS TABLE */}
       <DpeIndividualsCard details={details} />
