@@ -37,7 +37,7 @@ function pickUA(): string {
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 const NEGATIVE_TTL_MS = 60 * 60 * 1000; // erreur: 1h
 
-export type ScrapeSource = "pj" | "pb";
+export type ScrapeSource = "pj" | "pb" | "118";
 
 export type ScrapedContact = {
   name: string | null;
@@ -116,14 +116,35 @@ function buildPagesJaunesUrl(opts: {
 
 function buildPagesBlanchesUrl(opts: {
   name?: string | null;
+  address?: string | null;
   cp?: string | null;
   city?: string | null;
 }): string {
   const u = new URL("https://www.pagesjaunes.fr/pagesblanches/recherche");
   const quoiqui = opts.name?.trim() || "";
-  const ou = [opts.cp, opts.city].filter(Boolean).join(" ").trim();
+  // ★ Inclut l'adresse dans `ou=` — PB est plus précis qu'avec CP+ville seul
+  //   (note : sans `quoiqui`, les résultats restent limités car PB est
+  //   designed name-first)
+  const ou = [opts.address, opts.cp, opts.city].filter(Boolean).join(" ").trim();
   if (quoiqui) u.searchParams.set("quoiqui", quoiqui);
   if (ou) u.searchParams.set("ou", ou);
+  return u.toString();
+}
+
+function build118000Url(opts: {
+  name?: string | null;
+  address?: string | null;
+  cp?: string | null;
+  city?: string | null;
+}): string {
+  // 118000.fr supporte vraiment la recherche par adresse via label=
+  // (concatène nom + adresse complète dans un seul champ)
+  const u = new URL("https://www.118000.fr/search");
+  const label = [opts.name, opts.address, opts.cp, opts.city]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (label) u.searchParams.set("label", label);
   return u.toString();
 }
 
@@ -207,6 +228,49 @@ function parsePagesBlanches(html: string): ScrapedContact[] {
   return items.map((it) => ({ ...it, source: "pb" as const }));
 }
 
+/**
+ * Parse les résultats 118000.fr (particuliers + pros à une adresse).
+ * 118000 a une structure HTML différente de PJ : utilise des classes
+ * `card`, `card-title`, `phone-number`, `address`.
+ */
+function parse118000(html: string): ScrapedContact[] {
+  const items: ScrapedContact[] = [];
+  // Pattern 1 : cards modernes (post-redesign 2023)
+  const cardRegex = /<(?:article|div)\b[^>]*class="[^"]*(?:result|card|listing)[^"]*"[^>]*>([\s\S]*?)<\/(?:article|div)>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = cardRegex.exec(html)) !== null) {
+    const block = m[1];
+
+    const nameMatch =
+      block.match(/<(?:h2|h3)[^>]*>([\s\S]*?)<\/(?:h2|h3)>/i) ||
+      block.match(/class="[^"]*(?:name|title)[^"]*"[^>]*>([\s\S]*?)</i);
+    const name = nameMatch ? decodeHtml(stripTags(nameMatch[1])) : null;
+
+    const phoneMatch =
+      block.match(/class="[^"]*(?:phone|tel|tel-number)[^"]*"[^>]*>([\s\S]*?)</i) ||
+      block.match(/href="tel:([^"]+)"/i);
+    const phone = phoneMatch ? decodeHtml(stripTags(phoneMatch[1])).replace(/[^\d+\s.()-]/g, "").trim() : null;
+
+    const addressMatch = block.match(/class="[^"]*(?:address|adresse|location)[^"]*"[^>]*>([\s\S]*?)<\//i);
+    const address = addressMatch ? decodeHtml(stripTags(addressMatch[1])) : null;
+
+    if (name && (phone || address)) {
+      items.push({
+        name, phone, email: null, website: null,
+        category: null, address, source: "118",
+      });
+    }
+  }
+  // Déduplication par nom (118000 a parfois des doublons cross-section)
+  const seen = new Set<string>();
+  return items.filter((c) => {
+    const key = `${c.name}|${c.phone}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /* ============================== CACHE ============================== */
 
 async function getCached(key: string): Promise<ScrapeResult | null> {
@@ -254,7 +318,19 @@ export async function scrapeContacts(opts: {
   const url =
     opts.source === "pj"
       ? buildPagesJaunesUrl(opts)
-      : buildPagesBlanchesUrl({ name: opts.name, cp: opts.cp, city: opts.city });
+      : opts.source === "pb"
+        ? buildPagesBlanchesUrl({
+            name: opts.name,
+            address: opts.address,
+            cp: opts.cp,
+            city: opts.city,
+          })
+        : build118000Url({
+            name: opts.name,
+            address: opts.address,
+            cp: opts.cp,
+            city: opts.city,
+          });
 
   const cacheKey = `scrape:${opts.source}:${url}`;
   const cached = await getCached(cacheKey);
@@ -263,7 +339,11 @@ export async function scrapeContacts(opts: {
   try {
     const { html, via } = await fetchHtml(url);
     const items =
-      opts.source === "pj" ? parsePagesJaunes(html) : parsePagesBlanches(html);
+      opts.source === "pj"
+        ? parsePagesJaunes(html)
+        : opts.source === "pb"
+          ? parsePagesBlanches(html)
+          : parse118000(html);
     const result: ScrapeResult = {
       source: opts.source,
       cached: false,

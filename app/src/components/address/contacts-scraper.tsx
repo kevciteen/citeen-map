@@ -12,12 +12,15 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Search, Loader2, Phone, Mail, Globe, MapPin, AlertTriangle,
-  Building, Users2, BookOpen, ExternalLink, Copy, ChevronDown,
-  ChevronUp, RefreshCw,
+  Building, Users2, ExternalLink, Copy, ChevronDown,
+  ChevronUp, RefreshCw, BookOpenText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { ExternalContactLinks } from "./external-contact-links";
+
+type ScrapeSource = "pj" | "pb" | "118";
 
 type ScrapedContact = {
   name: string | null;
@@ -26,11 +29,11 @@ type ScrapedContact = {
   website: string | null;
   category: string | null;
   address: string | null;
-  source: "pj" | "pb";
+  source: ScrapeSource;
 };
 
 type ScrapeResult = {
-  source: "pj" | "pb";
+  source: ScrapeSource;
   cached: boolean;
   fetcher: "direct" | "scrapingbee";
   url: string;
@@ -49,15 +52,23 @@ export function ContactsScraper({
   city?: string | null;
 }) {
   const [tab, setTab] = useState<"external" | "scrape">("external");
+  const [name, setName] = useState("");
   const [pjResult, setPjResult] = useState<ScrapeResult | null>(null);
   const [pbResult, setPbResult] = useState<ScrapeResult | null>(null);
+  const [r118Result, setR118Result] = useState<ScrapeResult | null>(null);
 
   const scrapeMutation = useMutation({
-    mutationFn: async (source: "pj" | "pb"): Promise<ScrapeResult> => {
+    mutationFn: async (source: ScrapeSource): Promise<ScrapeResult> => {
       const r = await fetch("/api/contacts/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, address, cp, city }),
+        body: JSON.stringify({
+          source,
+          address,
+          cp,
+          city,
+          name: name.trim() || undefined,
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? "Erreur scraper");
@@ -65,7 +76,8 @@ export function ContactsScraper({
     },
     onSuccess: (data) => {
       if (data.source === "pj") setPjResult(data);
-      else setPbResult(data);
+      else if (data.source === "pb") setPbResult(data);
+      else if (data.source === "118") setR118Result(data);
       if (data.error) {
         toast.warning(data.error);
       } else if (data.items.length > 0) {
@@ -104,12 +116,24 @@ export function ContactsScraper({
           {/* Warning bandeau */}
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
             <AlertTriangle className="mr-1 inline h-3 w-3" />
-            <strong>Usage à tes risques.</strong> Pages Jaunes interdit le
-            scraping automatisé dans ses ToS. Sans
-            <code className="mx-1 rounded bg-amber-100 px-1">SCRAPINGBEE_API_KEY</code>
-            configuré, la plupart des requêtes seront bloquées par Cloudflare
-            (IP datacenter Vercel). Avec ScrapingBee/équivalent : ~50€/mois,
-            bypass Cloudflare + render JS.
+            <strong>Usage à tes risques.</strong> PJ/PB ToS interdisent le
+            scraping. Pages Blanches par adresse seule = résultats limités
+            (designed name-first depuis 2015). Pour les particuliers, mieux
+            avec un nom (ex: &quot;Dupont&quot;) OU via 118000.fr qui supporte
+            réellement la recherche par adresse.
+          </div>
+
+          {/* Champ nom optionnel (cible PB) */}
+          <div>
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Nom à chercher (optionnel — utile pour Pages Blanches)
+            </label>
+            <Input
+              placeholder="ex: Dupont (ou laisse vide)"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="h-8"
+            />
           </div>
 
           {/* Boutons scraper */}
@@ -125,7 +149,7 @@ export function ContactsScraper({
               ) : (
                 <Building className="h-3.5 w-3.5" />
               )}
-              Scraper Pages Jaunes (B2B)
+              Pages Jaunes (B2B)
             </Button>
             <Button
               variant="outline"
@@ -138,7 +162,20 @@ export function ContactsScraper({
               ) : (
                 <Users2 className="h-3.5 w-3.5" />
               )}
-              Scraper Pages Blanches (B2C — RGPD ⚠)
+              Pages Blanches (B2C — mieux avec nom)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => scrapeMutation.mutate("118")}
+              disabled={scrapeMutation.isPending}
+            >
+              {scrapeMutation.isPending && scrapeMutation.variables === "118" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <BookOpenText className="h-3.5 w-3.5" />
+              )}
+              118000 (par adresse — recommandé pour particuliers)
             </Button>
           </div>
 
@@ -159,6 +196,16 @@ export function ContactsScraper({
               icon={Users2}
               result={pbResult}
               onRefresh={() => scrapeMutation.mutate("pb")}
+            />
+          ) : null}
+
+          {/* Résultats 118000 */}
+          {r118Result ? (
+            <ResultBlock
+              title="118000.fr (recherche par adresse)"
+              icon={BookOpenText}
+              result={r118Result}
+              onRefresh={() => scrapeMutation.mutate("118")}
             />
           ) : null}
         </div>
