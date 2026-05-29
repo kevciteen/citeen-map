@@ -417,10 +417,21 @@ function OccupantPanelRow({ o, accent, buildingId, onEnriched }: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ occupantId: o.id }),
       });
-      if (!res.ok) throw new Error(`Erreur ${res.status}`);
-      const j = await res.json() as { enrichis: number; sans_contact: number };
-      if (j.enrichis > 0) toast.success("Coordonnées trouvées");
-      else toast.info("Aucune coordonnée trouvée (OSM + Google)");
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`Erreur ${res.status} : ${errBody.slice(0, 100)}`);
+      }
+      const j = await res.json() as {
+        enrichis: number;
+        sans_contact: number;
+        failures?: Array<{ reason: string }>;
+      };
+      if (j.enrichis > 0) {
+        toast.success("Coordonnées trouvées");
+      } else {
+        const reason = j.failures?.[0]?.reason ?? "OSM + Google sans résultat";
+        toast.info(`Aucune coord. : ${reason}`, { duration: 6000 });
+      }
       onEnriched();
     } catch (err) {
       toast.error((err as Error).message);

@@ -79,6 +79,12 @@ export async function POST(
 
   let enrichedOk = 0;
   let enrichedFail = 0;
+  // Détail des échecs pour debug UI
+  const failures: Array<{
+    occupantId: number;
+    denomination: string | null;
+    reason: string;
+  }> = [];
 
   // Enrichissement en parallèle (limité à ~5 concurrent pour ne pas surcharger Overpass)
   const CONCURRENCY = 5;
@@ -88,14 +94,24 @@ export async function POST(
       batch.map(async (o) => {
         if (!o.denomination) {
           enrichedFail++;
+          failures.push({ occupantId: o.id, denomination: null, reason: "dénomination vide" });
+          return;
+        }
+        if (building.lat == null || building.lon == null) {
+          enrichedFail++;
+          failures.push({
+            occupantId: o.id,
+            denomination: o.denomination,
+            reason: "bâtiment sans coordonnées GPS (OSM rayon nécessaire)",
+          });
           return;
         }
         try {
           const contact = await findContactInfo({
             denomination: o.denomination,
             address: o.adresse_enregistree ?? "",
-            lat: building.lat ?? undefined,
-            lon: building.lon ?? undefined,
+            lat: building.lat,
+            lon: building.lon,
           });
           await db.run(
             `UPDATE tertiary_occupants SET
@@ -112,10 +128,23 @@ export async function POST(
             ],
           );
           await syncDirectoryOccupant(o.id).catch(() => {});
-          if (contact.source !== "none") enrichedOk++;
-          else enrichedFail++;
-        } catch {
+          if (contact.source !== "none") {
+            enrichedOk++;
+          } else {
+            enrichedFail++;
+            failures.push({
+              occupantId: o.id,
+              denomination: o.denomination,
+              reason: "OSM 0 POI + Google 0 résultat (essaie le scraper PJ)",
+            });
+          }
+        } catch (err) {
           enrichedFail++;
+          failures.push({
+            occupantId: o.id,
+            denomination: o.denomination,
+            reason: (err as Error).message,
+          });
         }
       }),
     );
@@ -125,5 +154,6 @@ export async function POST(
     candidats: rows.length,
     enrichis: enrichedOk,
     sans_contact: enrichedFail,
+    failures: failures.slice(0, 10), // garde top 10 pour ne pas saturer
   });
 }

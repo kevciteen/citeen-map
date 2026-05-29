@@ -26,6 +26,7 @@ import { TertiaireMap, type TertiairePoint, type MapBounds } from "@/components/
 import { TertiairePanel } from "@/components/map/tertiaire-panel";
 import { CeeTertiairePostes } from "@/components/crm/cee-tertiaire-postes";
 import { AddressAutocomplete } from "@/components/crm/address-autocomplete";
+import { ContactsScraper } from "@/components/address/contacts-scraper";
 
 type LookupResult = {
   query: string;
@@ -477,6 +478,25 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
               </p>
             </ResultCard>
           </div>
+
+          {/* RECHERCHE CONTACTS À L'ADRESSE (scraper PJ/PB/118 + deep-links) */}
+          {result.geocode ? (
+            <ResultCard
+              icon={<Phone className="h-4 w-4 text-primary" />}
+              title="Rechercher des contacts à cette adresse"
+              right={
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  scraper + liens
+                </span>
+              }
+            >
+              <ContactsScraper
+                address={result.geocode.label.replace(/\s+\d{5}\s+.+$/, "").trim()}
+                cp={result.geocode.postcode ?? null}
+                city={result.geocode.city ?? null}
+              />
+            </ResultCard>
+          ) : null}
         </>
       ) : null}
     </div>
