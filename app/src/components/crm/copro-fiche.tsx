@@ -27,6 +27,7 @@ import { CoproStreetView } from "@/components/crm/copro-streetview";
 import { CeeCoproPostes } from "@/components/crm/cee-copro-postes";
 import { CoproSyndicContacts } from "@/components/crm/copro-syndic-contacts";
 import { DpeAtAddress } from "@/components/dpe/dpe-at-address";
+import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -720,6 +721,24 @@ export function CoproFiche({
 
       {/* CONTACTS SYNDIC (Sirene + auto OSM/Google + manuel) */}
       <CoproSyndicContacts syndicName={copro.syndic ?? null} />
+
+      {/* RECHERCHE CONTACTS À L'ADRESSE (particuliers + occupants + pros) */}
+      {copro.adresse ? (
+        <Card className="print:shadow-none">
+          <CardHeader>
+            <CardTitle className="text-sm">
+              Recherche contacts à l&apos;adresse
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ExternalContactLinks
+              address={copro.adresse}
+              cp={copro.code_postal}
+              city={copro.commune}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* INVENTAIRE DPE ADEME À L'ADRESSE (reflet exhaustif) */}
       {copro.adresse ? (

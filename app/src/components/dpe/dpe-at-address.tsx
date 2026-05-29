@@ -14,15 +14,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Search, Loader2, MapPin, Building2, Home, FileText, Info,
-  AlertTriangle, CheckCircle2, Sparkles,
+  Loader2, MapPin, Building2, Home, FileText, Info,
+  AlertTriangle, CheckCircle2, Sparkles, Users2,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { jsonFetcher } from "@/lib/fetcher";
+import { AddressAutocomplete } from "@/components/address/address-autocomplete";
+import { ExternalContactLinks } from "@/components/address/external-contact-links";
 
 type DpeKind =
   | "collectif_reel"
@@ -98,18 +99,25 @@ export function DpeAtAddress({
     <div className="space-y-4">
       <form
         onSubmit={onSubmit}
-        className="flex items-center gap-2 rounded-xl border border-border bg-card p-3 shadow-sm"
+        className="rounded-xl border border-border bg-card p-3 shadow-sm"
       >
-        <Search className="ml-1 h-4 w-4 shrink-0 text-muted-foreground" />
-        <Input
-          placeholder="Adresse (ex: 2 avenue lenine romainville)"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          className="border-0 bg-transparent focus-visible:ring-0"
-        />
-        <Button type="submit" size="sm" disabled={input.trim().length < 5}>
-          Chercher
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <AddressAutocomplete
+              value={input}
+              onChange={setInput}
+              onSelect={(s) => setActive(s.label)}
+              placeholder="Adresse (ex: 2 avenue lenine romainville)"
+            />
+          </div>
+          <Button type="submit" size="sm" disabled={input.trim().length < 5}>
+            Chercher
+          </Button>
+        </div>
+        <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">
+          Source : ADEME (data.gouv.fr) — base nationale des DPE existants
+          + BAN pour le géocodage.
+        </p>
       </form>
 
       {error ? (
@@ -143,6 +151,14 @@ function ResultsView({ data, fetching }: { data: Result; fetching: boolean }) {
   }
 
   const noResults = data.matchedCount === 0;
+  const resolvedLabel = data.banResolved.label;
+  // Extract CP + city pour les liens externes (parse simple du label BAN)
+  const parsed = resolvedLabel.match(/(\d{5})\s+(.+)$/);
+  const cp = parsed?.[1] ?? null;
+  const city = parsed?.[2] ?? null;
+  const streetOnly = parsed
+    ? resolvedLabel.replace(parsed[0], "").trim()
+    : resolvedLabel;
 
   return (
     <div className="space-y-4">
@@ -255,6 +271,20 @@ function ResultsView({ data, fetching }: { data: Result; fetching: boolean }) {
           ))}
         </Section>
       ) : null}
+
+      {/* Section 6 : recherche externe contacts (legal-friendly, deep-links) */}
+      <Section
+        title="Rechercher des contacts à cette adresse"
+        subtitle="Particuliers + commerces + pros — sources publiques externes"
+        icon={Users2}
+        accent="slate"
+      >
+        <ExternalContactLinks
+          address={streetOnly}
+          cp={cp}
+          city={city}
+        />
+      </Section>
 
       {/* Notes diagnostiques */}
       {data.notes.length > 0 ? (
