@@ -24,6 +24,11 @@ import {
   extractLatLon as extractTertLatLon,
   type DpeTertiaireRecord,
 } from "./dpe-tertiaire";
+import {
+  fetchDpeLegacyAround,
+  extractLegacyLatLon,
+  type DpeLegacyRecord,
+} from "./dpe-legacy";
 
 export type DpeKind =
   | "collectif_reel"
@@ -31,6 +36,7 @@ export type DpeKind =
   | "appartement_derive_immeuble"
   | "maison_individuelle"
   | "tertiaire"
+  | "legacy_residentiel"
   | "autre";
 
 export type DpeAtAddressItem = {
@@ -73,6 +79,7 @@ export type DpeAtAddressResult = {
   appartementsDerivesImmeuble: DpeAtAddressItem[];
   maisonsIndividuelles: DpeAtAddressItem[];
   tertiaires: DpeAtAddressItem[];
+  legacyResidentiels: DpeAtAddressItem[];
   autres: DpeAtAddressItem[];
   notes: string[];
 };
@@ -232,6 +239,7 @@ export async function lookupDpeAtAddress(
       appartementsDerivesImmeuble: [],
       maisonsIndividuelles: [],
       tertiaires: [],
+      legacyResidentiels: [],
       autres: [],
       notes: [
         ban
@@ -315,6 +323,20 @@ export async function lookupDpeAtAddress(
     notes.push(`ADEME tertiaire : erreur (${(e as Error).message})`);
   }
 
+  // DPE Legacy résidentiel (méthode pré-2021, dataset dpe-france)
+  let rawLegacy: DpeLegacyRecord[] = [];
+  try {
+    rawLegacy = await fetchDpeLegacyAround({
+      lat: ban.lat,
+      lon: ban.lon,
+      radiusM: usedR,
+      size: 200,
+    });
+    notes.push(`ADEME DPE legacy résidentiel : ${rawLegacy.length} DPE bruts à ${usedR}m`);
+  } catch (e) {
+    notes.push(`ADEME DPE legacy : erreur (${(e as Error).message})`);
+  }
+
   // 4. Le filtre adresse strict a déjà été appliqué dans la boucle
   //    progressive ci-dessus (matched contient les DPE conservés).
 
@@ -386,6 +408,31 @@ export async function lookupDpeAtAddress(
     tertiaireItems.push(tertiaryToItem(r));
   }
 
+  // Legacy résidentiel : filtre strict (CP + commune + voie + numéro + distance)
+  const legacyItems: DpeAtAddressItem[] = [];
+  for (const r of rawLegacy.slice(0, 50)) {
+    const recCp = String(r.code_postal ?? "").trim();
+    if (targetPostcode && recCp && recCp !== targetPostcode) continue;
+    const recCity = normalizeAscii(r.commune ?? "");
+    if (targetCity && recCity && recCity !== targetCity) continue;
+    const recStreetField = String(r.nom_rue ?? r.geo_adresse ?? "");
+    if (targetHouseN) {
+      const recN = recStreetField.trim().match(/^(\d+)/)?.[1] ?? "";
+      if (!recN || recN !== targetHouseN) continue;
+    }
+    if (targetTokens.size > 0) {
+      const overlap = tokenOverlap(targetTokens, streetTokens(recStreetField));
+      if (overlap < 0.7) continue;
+    }
+    // Distance check (anti-faux-positifs cross-parcel)
+    const coords = extractLegacyLatLon(r);
+    if (coords) {
+      const dist = distanceMeters(ban.lat, ban.lon, coords.lat, coords.lon);
+      if (dist > 30) continue; // legacy plus tolérant (30m vs 20m tertiaire)
+    }
+    legacyItems.push(legacyToItem(r));
+  }
+
   const collectifsReels = items.filter((i) => i.kind === "collectif_reel");
   const appartementsIndividuels = items.filter((i) => i.kind === "appartement_individuel");
   const appartementsDerivesImmeuble = items.filter((i) => i.kind === "appartement_derive_immeuble");
@@ -403,6 +450,7 @@ export async function lookupDpeAtAddress(
   appartementsDerivesImmeuble.sort(byDateDesc);
   maisonsIndividuelles.sort(byDateDesc);
   tertiaireItems.sort(byDateDesc);
+  legacyItems.sort(byDateDesc);
   autres.sort(byDateDesc);
 
   return {
@@ -427,8 +475,34 @@ export async function lookupDpeAtAddress(
     appartementsDerivesImmeuble,
     maisonsIndividuelles,
     tertiaires: tertiaireItems,
+    legacyResidentiels: legacyItems,
     autres,
     notes,
+  };
+}
+
+/** Convertit un DPE legacy résidentiel en DpeAtAddressItem */
+function legacyToItem(r: DpeLegacyRecord): DpeAtAddressItem {
+  const coords = extractLegacyLatLon(r);
+  return {
+    kind: "legacy_residentiel",
+    numero_dpe: r.numero_dpe ?? null,
+    numero_dpe_immeuble: null,
+    etiquette_dpe: r.classe_consommation_energie ?? null,
+    etiquette_ges: r.classe_estimation_ges ?? null,
+    date_etablissement: r.date_etablissement_dpe ?? null,
+    date_modification: null,
+    type_batiment: r.tr002_type_batiment_libelle ?? "Logement",
+    methode_application_dpe: "DPE pré-2021 (méthode 3CL ou autre)",
+    numero_voie_ban: null,
+    nom_rue_ban: r.nom_rue ?? r.geo_adresse ?? null,
+    code_postal_ban: r.code_postal ?? null,
+    nom_commune_ban: r.commune ?? null,
+    surface_habitable:
+      Number(r.surface_thermique_lot ?? r.surface_habitable ?? r.shon ?? NaN) || null,
+    conso_5_usages_par_m2_ep: Number(r.consommation_energie ?? NaN) || null,
+    lat: coords?.lat ?? null,
+    lon: coords?.lon ?? null,
   };
 }
 

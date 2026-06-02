@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   Loader2, MapPin, Building2, Home, FileText, Info,
-  AlertTriangle, CheckCircle2, Sparkles, Users2, Briefcase,
+  AlertTriangle, CheckCircle2, Sparkles, Users2, Briefcase, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,6 +32,7 @@ type DpeKind =
   | "appartement_derive_immeuble"
   | "maison_individuelle"
   | "tertiaire"
+  | "legacy_residentiel"
   | "autre";
 
 type DpeItem = {
@@ -67,6 +68,7 @@ type Result = {
   appartementsDerivesImmeuble: DpeItem[];
   maisonsIndividuelles: DpeItem[];
   tertiaires: DpeItem[];
+  legacyResidentiels: DpeItem[];
   autres: DpeItem[];
   notes: string[];
 };
@@ -261,7 +263,27 @@ function ResultsView({ data, fetching }: { data: Result; fetching: boolean }) {
         </Section>
       ) : null}
 
-      {/* Section 5 : DPE TERTIAIRE (dataset différent ADEME) */}
+      {/* Section : DPE résidentiels pré-2021 (dataset dpe-france) */}
+      {data.legacyResidentiels.length > 0 ? (
+        <Section
+          title="DPE résidentiels pré-2021 (méthode ancienne)"
+          subtitle={`${data.legacyResidentiels.length} DPE pré-juillet 2021 (toujours valides 10 ans)`}
+          icon={History}
+          accent="slate"
+        >
+          <p className="mb-2 flex items-start gap-1 text-[11px] text-muted-foreground">
+            <Info className="mt-0.5 h-3 w-3 shrink-0" />
+            DPE émis avant la réforme du 1er juillet 2021. Méthode 3CL ou
+            autres — moins détaillés que les DPE actuels mais toujours
+            valides 10 ans après leur établissement.
+          </p>
+          {data.legacyResidentiels.map((it) => (
+            <DpeRow key={it.numero_dpe ?? Math.random()} item={it} />
+          ))}
+        </Section>
+      ) : null}
+
+      {/* Section : DPE TERTIAIRE (dataset différent ADEME) */}
       {data.tertiaires.length > 0 ? (
         <Section
           title="DPE tertiaire (bureaux, commerces, hôtels, etc.)"
