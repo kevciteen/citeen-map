@@ -250,6 +250,16 @@ export function CoproFiche({
     PERIOD_LABELS[copro.periode_construction ?? ""] ??
     (copro.periode_construction ?? "—").replace(/_/g, " ");
 
+  // Onglets pour réduire la charge visuelle
+  type Tab = "vue" | "dpe" | "env" | "notes";
+  const [tab, setTab] = useState<Tab>("vue");
+  const tabs: Array<{ key: Tab; label: string; emoji: string }> = [
+    { key: "vue", label: "Vue d'ensemble", emoji: "🏢" },
+    { key: "dpe", label: "DPE & énergie", emoji: "⚡" },
+    { key: "env", label: "Environnement & contacts", emoji: "🌍" },
+    { key: "notes", label: "Mes notes (CRM)", emoji: "📝" },
+  ];
+
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-6 print:max-w-full print:p-0">
       {/* HEADER avec dégradé DPE */}
@@ -721,77 +731,111 @@ export function CoproFiche({
         </Card>
       </div>
 
-      {/* CONTACTS SYNDIC (Sirene + auto OSM/Google + manuel) */}
-      <CoproSyndicContacts syndicName={copro.syndic ?? null} />
+      {/* ===== NAVIGATION ONGLETS ===== */}
+      <div className="sticky top-0 z-10 -mx-6 mb-4 border-b border-border bg-secondary/30/80 px-6 py-2 backdrop-blur print:hidden">
+        <div className="flex flex-wrap gap-1">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={
+                "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors " +
+                (tab === t.key
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-card text-muted-foreground hover:bg-secondary")
+              }
+            >
+              <span className="mr-1">{t.emoji}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      {/* RISQUES NATURELS ET TECHNOLOGIQUES (Géorisques) */}
-      <GeorisquesCard
-        codeInsee={copro.code_insee_commune}
-        commune={copro.commune}
-      />
-
-      {/* ÉDITION CRM (overrides + notes + tags) */}
-      <EntityEditPanel
-        entityType="copro"
-        entityRef={String(copro.id)}
-        title="Édition CRM — Notes, tags, surcharges (sur cette copro)"
-        suggestedFields={[
-          { key: "nom_personnalise", label: "Nom personnalisé" },
-          { key: "contact_president_cs", label: "Président conseil syndical" },
-          { key: "telephone_contact", label: "Téléphone contact", type: "tel" },
-          { key: "email_contact", label: "Email contact", type: "email" },
-          { key: "nb_logements_total", label: "Nb logements (correction)" },
-          { key: "commentaire_court", label: "Commentaire", type: "textarea" },
-        ]}
-      />
-
-      {/* RECHERCHE CONTACTS À L'ADRESSE (particuliers + occupants + pros) */}
-      {copro.adresse ? (
-        <Card className="print:shadow-none">
-          <CardHeader>
-            <CardTitle className="text-sm">
-              Recherche contacts à l&apos;adresse
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ExternalContactLinks
-              address={copro.adresse}
-              cp={copro.code_postal}
-              city={copro.commune}
-            />
-          </CardContent>
-        </Card>
+      {/* ===== TAB : VUE D'ENSEMBLE ===== */}
+      {tab === "vue" ? (
+        <CoproSyndicContacts syndicName={copro.syndic ?? null} />
       ) : null}
 
-      {/* INVENTAIRE DPE ADEME À L'ADRESSE (reflet exhaustif) */}
-      {copro.adresse ? (
-        <Card className="print:shadow-none">
-          <CardHeader>
-            <CardTitle className="text-sm">
-              Inventaire DPE ADEME à cette adresse
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="mb-3 text-[11px] text-muted-foreground">
-              Reflet exhaustif des DPE publiés à l&apos;adresse exacte —
-              sectionnés par type ADEME canonique. Permet de retrouver les
-              DPE collectifs réels et les diagnostics individuels qui
-              n&apos;apparaissent pas dans l&apos;estimation moyennée
-              ci-dessus.
-            </p>
-            <DpeAtAddress
-              initialQuery={`${copro.adresse}${copro.code_postal ? ` ${copro.code_postal}` : ""}${copro.commune ? ` ${copro.commune}` : ""}`}
-              autoSearch
-            />
-          </CardContent>
-        </Card>
+      {/* ===== TAB : DPE & ÉNERGIE ===== */}
+      {tab === "dpe" ? (
+        <>
+          {copro.adresse ? (
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle className="text-sm">
+                  Inventaire DPE ADEME à cette adresse
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  Reflet exhaustif des DPE publiés à l&apos;adresse exacte —
+                  sectionnés par type ADEME canonique.
+                </p>
+                <DpeAtAddress
+                  initialQuery={`${copro.adresse}${copro.code_postal ? ` ${copro.code_postal}` : ""}${copro.commune ? ` ${copro.commune}` : ""}`}
+                  autoSearch
+                />
+              </CardContent>
+            </Card>
+          ) : null}
+          <DpeIndividualsCard details={details} />
+          <SimilarsCard coproId={copro.id} />
+        </>
       ) : null}
 
-      {/* DPE INDIVIDUELS TABLE */}
-      <DpeIndividualsCard details={details} />
+      {/* ===== TAB : ENVIRONNEMENT & CONTACTS EXTERNES ===== */}
+      {tab === "env" ? (
+        <>
+          <GeorisquesCard
+            codeInsee={copro.code_insee_commune}
+            commune={copro.commune}
+          />
+          {copro.adresse ? (
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle className="text-sm">
+                  Annuaires officiels à cette adresse
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ExternalContactLinks
+                  address={copro.adresse}
+                  cp={copro.code_postal}
+                  city={copro.commune}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
+        </>
+      ) : null}
 
-      {/* SIMILAIRES (suggestion prospection) */}
-      <SimilarsCard coproId={copro.id} />
+      {/* ===== TAB : MES NOTES CRM ===== */}
+      {tab === "notes" ? (
+        <EntityEditPanel
+          entityType="copro"
+          entityRef={String(copro.id)}
+          title="Édition CRM — Notes, tags, surcharges (sur cette copro)"
+          suggestedFields={[
+            { key: "nom_personnalise", label: "Nom personnalisé" },
+            { key: "contact_president_cs", label: "Président conseil syndical" },
+            { key: "telephone_contact", label: "Téléphone contact", type: "tel" },
+            { key: "email_contact", label: "Email contact", type: "email" },
+            { key: "nb_logements_total", label: "Nb logements (correction)" },
+            { key: "commentaire_court", label: "Commentaire", type: "textarea" },
+          ]}
+        />
+      ) : null}
+
+      {/* En mode impression : tout est affiché linéairement */}
+      <div className="hidden print:block print:space-y-4">
+        <CoproSyndicContacts syndicName={copro.syndic ?? null} />
+        <GeorisquesCard
+          codeInsee={copro.code_insee_commune}
+          commune={copro.commune}
+        />
+        <DpeIndividualsCard details={details} />
+      </div>
     </div>
   );
 }
