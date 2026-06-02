@@ -10,6 +10,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { PrintButton } from "@/components/common/print-button";
+import { EntityEditPanel } from "@/components/overrides/entity-edit-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -89,6 +90,21 @@ export default async function DpeDetailPage({
           ) : legacy ? (
             <DpeTertiaireDetailView record={legacyToTertRecord(legacy)} />
           ) : null}
+
+          {/* ÉDITION CRM : notes/tags/surcharges sur ce DPE précis */}
+          <EntityEditPanel
+            entityType="dpe"
+            entityRef={numero}
+            title="Édition CRM — Notes, tags, contacts (sur ce DPE)"
+            suggestedFields={[
+              { key: "nom_occupant", label: "Nom occupant" },
+              { key: "telephone_occupant", label: "Téléphone", type: "tel" },
+              { key: "email_occupant", label: "Email", type: "email" },
+              { key: "etage", label: "Étage / N° appartement" },
+              { key: "statut_occupant", label: "Propriétaire / Locataire" },
+              { key: "commentaire_court", label: "Commentaire", type: "textarea" },
+            ]}
+          />
         </div>
       </div>
     </div>

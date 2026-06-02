@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { SyndicCoprosSection } from "@/components/crm/syndic-copros-section";
+import { EntityEditPanel } from "@/components/overrides/entity-edit-panel";
 
 type SyndicAggregate = {
   nb_copros: number;
@@ -197,6 +198,20 @@ export function SyndicDetail({ initial }: { initial: FullDetail }) {
 
       {/* COPROS GÉRÉES — section enrichie (map + table + export campagne) */}
       <SyndicCoprosSection slug={slug} name={name} />
+
+      {/* ÉDITION CRM (override + notes + tags spécifiques à ce syndic) */}
+      <EntityEditPanel
+        entityType="syndic"
+        entityRef={slug}
+        title="Édition CRM avancée — Notes, tags, champs personnalisés (sur ce syndic)"
+        suggestedFields={[
+          { key: "contact_principal", label: "Contact principal" },
+          { key: "telephone_direct", label: "Téléphone direct", type: "tel" },
+          { key: "email_direct", label: "Email direct", type: "email" },
+          { key: "date_derniere_relance", label: "Date dernière relance" },
+          { key: "commentaire_court", label: "Commentaire", type: "textarea" },
+        ]}
+      />
 
       {/* RÉPARTITION DPE */}
       {aggregate && totalDpe > 0 ? (
