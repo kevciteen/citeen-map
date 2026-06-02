@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/auth/session";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { PrintButton } from "@/components/common/print-button";
 
 export const dynamic = "force-dynamic";
 
@@ -55,13 +56,16 @@ export default async function TertiaireBuildingDetailPage({
       />
       <div className="flex-1 overflow-y-auto bg-secondary/30 p-6">
         <div className="mx-auto max-w-5xl space-y-3">
-          <Link
-            href="/tertiaire"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-          >
-            <ArrowLeft className="h-3 w-3" />
-            Retour à la recherche par adresse
-          </Link>
+          <div className="flex items-center justify-between gap-2">
+            <Link
+              href="/tertiaire"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Retour à la recherche par adresse
+            </Link>
+            <PrintButton />
+          </div>
           <TertiaireBuildingDetail buildingId={building.id} initialBuilding={building} />
         </div>
       </div>

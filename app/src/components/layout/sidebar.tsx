@@ -35,8 +35,8 @@ const items = [
   { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
   { href: "/dpe", label: "DPE par adresse", icon: ScanSearch },
-  // Hidden temporarily : /annuaire, /campagnes, /exports
-  // (à réactiver plus tard quand les chantiers seront finalisés)
+  { href: "/exports", label: "Exports data", icon: FileDown },
+  // Hidden : /annuaire, /campagnes (actions commerciales — à venir)
 ];
 
 export function Sidebar() {
