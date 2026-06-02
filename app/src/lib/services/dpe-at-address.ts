@@ -300,23 +300,48 @@ export async function lookupDpeAtAddress(
   // 5. Segmentation par type ADEME canonique
   const items = matched.map(toItem);
 
-  // Tertiaire : filtre par commune (pas de tokens stricts car dataset différent)
-  const tertiaireItems: DpeAtAddressItem[] = rawTert
-    .filter((r) => {
-      if (!isReallyTertiary(r)) return false;
-      const recCp = String(r.code_postal ?? "").trim();
-      if (targetPostcode && recCp && recCp !== targetPostcode) return false;
-      const recCity = normalizeAscii(r.commune ?? "");
-      if (targetCity && recCity && recCity !== targetCity) return false;
-      // Match street tokens loose
-      const recStreet = String(r.geo_adresse ?? r.nom_rue ?? "");
-      if (targetTokens.size > 0) {
-        const overlap = tokenOverlap(targetTokens, streetTokens(recStreet));
-        if (overlap < 0.5) return false;
+  // Tertiaire : filtre STRICT (post-Lénine fix) :
+  //   - isReallyTertiary (exige mot-clé tertiaire positif, exclut habitation)
+  //   - CP + commune exacts
+  //   - Numéro de voie exact (extrait du début de nom_rue/geo_adresse)
+  //   - Token overlap >= 0.7 (mêmes seuils que résidentiel)
+  //   - Cadastre IDU match avec la parcelle BAN (rejette les DPE qui ont
+  //     bien la bonne adresse texte mais coords sur une parcelle voisine)
+  const tertiaireCandidates = rawTert.filter((r) => {
+    if (!isReallyTertiary(r)) return false;
+    const recCp = String(r.code_postal ?? "").trim();
+    if (targetPostcode && recCp && recCp !== targetPostcode) return false;
+    const recCity = normalizeAscii(r.commune ?? "");
+    if (targetCity && recCity && recCity !== targetCity) return false;
+    const recStreetField = String(r.nom_rue ?? r.geo_adresse ?? "");
+    // Numéro de voie : "2 AVENUE LENINE" → "2"
+    if (targetHouseN) {
+      const recN = recStreetField.trim().match(/^(\d+)/)?.[1] ?? "";
+      if (!recN || recN !== targetHouseN) return false;
+    }
+    if (targetTokens.size > 0) {
+      const overlap = tokenOverlap(targetTokens, streetTokens(recStreetField));
+      if (overlap < 0.7) return false;
+    }
+    return true;
+  });
+
+  // Cadastre check pour les candidats restants (max 10 pour éviter slow)
+  const tertiaireItems: DpeAtAddressItem[] = [];
+  for (const r of tertiaireCandidates.slice(0, 10)) {
+    if (parcelle) {
+      const dpeCoords = extractTertLatLon(r);
+      if (dpeCoords) {
+        const dpePar = await getParcelByPoint(dpeCoords.lat, dpeCoords.lon).catch(() => null);
+        if (dpePar && dpePar.idu !== parcelle.idu) {
+          // DPE sur une parcelle différente → rejette (cas Lénine : 37m
+          // d'écart, parcelle voisine)
+          continue;
+        }
       }
-      return true;
-    })
-    .map((r) => tertiaryToItem(r));
+    }
+    tertiaireItems.push(tertiaryToItem(r));
+  }
 
   const collectifsReels = items.filter((i) => i.kind === "collectif_reel");
   const appartementsIndividuels = items.filter((i) => i.kind === "appartement_individuel");
