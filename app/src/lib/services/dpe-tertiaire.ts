@@ -83,12 +83,49 @@ function dedupeLatest(list: DpeTertiaireRecord[]): DpeTertiaireRecord[] {
  * Attention : "Non résidentiel" contient "résidentiel" — on ne peut pas
  * juste faire includes("résidentiel"). On match les libellés exacts ADEME.
  */
+function normAscii(s: unknown): string {
+  return String(s ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Mots-clés tertiaire stricts. Si AUCUN n'apparaît dans typeBat ou secteur,
+ * on considère que ce n'est pas du vrai tertiaire (probablement résidentiel
+ * collectif mal classifié dans le dataset dpe-tertiaire).
+ */
+const TERTIARY_POSITIVE_KEYWORDS = [
+  "non residentiel",
+  "bureaux", "bureau",
+  "commerce", "commerces",
+  "hotel", "restaurant", "restauration",
+  "sante", "soin",
+  "enseignement", "education", "ecole", "universite",
+  "sport", "loisir", "culture",
+  "transport", "industrie", "stockage", "atelier",
+  "centre commercial", "centres commerciaux",
+];
+
 export function isReallyTertiary(r: DpeTertiaireRecord): boolean {
-  const typeBat = String(r.tr002_type_batiment_libelle ?? "").trim().toLowerCase();
-  // Libellés ADEME : "Résidentiel", "Non résidentiel", "Centres commerciaux"
-  if (typeBat === "résidentiel" || typeBat === "residentiel") return false;
-  const secteur = String(r.secteur_activite ?? "").trim().toLowerCase();
-  if (secteur.startsWith("habitation")) return false;
+  const typeBat = normAscii(r.tr002_type_batiment_libelle);
+  const secteur = normAscii(r.secteur_activite);
+
+  // ★ Exclusions explicites — résidentiel sous toutes ses formes
+  if (typeBat.includes("residentiel") && !typeBat.includes("non residentiel"))
+    return false;
+  if (secteur.includes("habitation")) return false;
+  if (secteur.includes("residentiel") && !secteur.includes("non residentiel"))
+    return false;
+  if (secteur.includes("parties communes")) return false; // chauffage collectif d'immeuble
+  if (secteur.includes("logement")) return false;
+
+  // ★ Doit avoir un indice POSITIF de tertiaire
+  const combined = `${typeBat} ${secteur}`;
+  const hasPositive = TERTIARY_POSITIVE_KEYWORDS.some((kw) => combined.includes(kw));
+  if (!hasPositive) return false;
+
   return true;
 }
 
