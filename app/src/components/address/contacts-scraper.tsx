@@ -11,16 +11,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Search, Loader2, Phone, Mail, Globe, MapPin, AlertTriangle,
-  Building, Users2, ExternalLink, Copy, ChevronDown,
-  ChevronUp, RefreshCw, BookOpenText,
+  Search, Loader2, Phone, Mail, Globe, MapPin,
+  Users2, ExternalLink, Copy, ChevronDown,
+  ChevronUp, RefreshCw, BookOpenText, Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { ExternalContactLinks } from "./external-contact-links";
 
-type ScrapeSource = "pj" | "pb" | "118";
+type ScrapeSource = "sirene" | "pb" | "118";
 
 type ScrapedContact = {
   name: string | null;
@@ -55,7 +55,7 @@ export function ContactsScraper({
   //   pas de redirection vers un site externe
   const [tab, setTab] = useState<"external" | "scrape">("scrape");
   const [name, setName] = useState("");
-  const [pjResult, setPjResult] = useState<ScrapeResult | null>(null);
+  const [sireneResult, setSireneResult] = useState<ScrapeResult | null>(null);
   const [pbResult, setPbResult] = useState<ScrapeResult | null>(null);
   const [r118Result, setR118Result] = useState<ScrapeResult | null>(null);
   const autoTriggeredRef = useRef<string | null>(null);
@@ -79,7 +79,7 @@ export function ContactsScraper({
         return j;
       },
       onSuccess: (data: ScrapeResult) => {
-        if (data.source === "pj") setPjResult(data);
+        if (data.source === "sirene") setSireneResult(data);
         else if (data.source === "pb") setPbResult(data);
         else if (data.source === "118") setR118Result(data);
         if (data.items.length > 0) {
@@ -92,20 +92,21 @@ export function ContactsScraper({
     });
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const pjMutation = makeMutation("pj");
+  const sireneMutation = makeMutation("sirene");
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const pbMutation = makeMutation("pb");
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const r118Mutation = makeMutation("118");
 
-  // ★ Auto-déclenche PJ + 118 au montage en PARALLÈLE (le cache 7j côté
-  //   serveur évite de consommer du crédit ScrapingBee en multi-visite).
+  // ★ Auto-déclenche Sirene + 118 au montage en PARALLÈLE.
+  //   Sirene = API officielle data.gouv.fr (gratuit + fiable, pas de
+  //   ScrapingBee). 118 = scrape avec cache 7j.
   useEffect(() => {
     const key = `${address}|${cp}|${city}`;
     if (!address || autoTriggeredRef.current === key) return;
     autoTriggeredRef.current = key;
     const t = window.setTimeout(() => {
-      pjMutation.mutate();
+      sireneMutation.mutate();
       r118Mutation.mutate();
     }, 100);
     return () => window.clearTimeout(t);
@@ -136,14 +137,17 @@ export function ContactsScraper({
         <ExternalContactLinks address={address} cp={cp} city={city} />
       ) : (
         <div className="space-y-3">
-          {/* Warning bandeau */}
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
-            <AlertTriangle className="mr-1 inline h-3 w-3" />
-            <strong>Usage à tes risques.</strong> PJ/PB ToS interdisent le
-            scraping. Pages Blanches par adresse seule = résultats limités
-            (designed name-first depuis 2015). Pour les particuliers, mieux
-            avec un nom (ex: &quot;Dupont&quot;) OU via 118000.fr qui supporte
-            réellement la recherche par adresse.
+          {/* Bandeau info sources */}
+          <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-[11px]">
+            <strong>Sources :</strong>{" "}
+            <span className="text-foreground">
+              <strong>Sirene</strong> (API officielle data.gouv.fr — entreprises B2B,
+              gratuit + fiable)
+            </span>
+            {" · "}
+            <strong>Pages Blanches</strong> (B2C — nécessite un nom pour de bons résultats)
+            {" · "}
+            <strong>118000.fr</strong> (recherche par adresse — particuliers + pros)
           </div>
 
           {/* Champ nom optionnel (cible PB) */}
@@ -164,15 +168,15 @@ export function ContactsScraper({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => pjMutation.mutate()}
-              disabled={pjMutation.isPending}
+              onClick={() => sireneMutation.mutate()}
+              disabled={sireneMutation.isPending}
             >
-              {pjMutation.isPending ? (
+              {sireneMutation.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Building className="h-3.5 w-3.5" />
+                <Briefcase className="h-3.5 w-3.5" />
               )}
-              {pjResult ? "Re-scrap Pages Jaunes" : "Pages Jaunes (B2B)"}
+              {sireneResult ? "Re-scrap Sirene" : "Sirene (entreprises)"}
             </Button>
             <Button
               variant="outline"
@@ -202,16 +206,16 @@ export function ContactsScraper({
             </Button>
           </div>
 
-          {/* Résultats PJ */}
-          {pjResult ? (
+          {/* Résultats Sirene (B2B officiel) */}
+          {sireneResult ? (
             <ResultBlock
-              title="Pages Jaunes (entreprises / commerces)"
-              icon={Building}
-              result={pjResult}
-              onRefresh={() => pjMutation.mutate()}
+              title="Sirene — Entreprises actives à l'adresse"
+              icon={Briefcase}
+              result={sireneResult}
+              onRefresh={() => sireneMutation.mutate()}
             />
-          ) : pjMutation.isPending ? (
-            <LoadingBlock title="Pages Jaunes" icon={Building} />
+          ) : sireneMutation.isPending ? (
+            <LoadingBlock title="Sirene (API data.gouv.fr)" icon={Briefcase} />
           ) : null}
 
           {/* Résultats 118000 */}
@@ -244,7 +248,7 @@ export function ContactsScraper({
 }
 
 function labelOf(s: ScrapeSource): string {
-  return s === "pj" ? "Pages Jaunes" : s === "pb" ? "Pages Blanches" : "118000";
+  return s === "sirene" ? "Sirene" : s === "pb" ? "Pages Blanches" : "118000";
 }
 
 function LoadingBlock({

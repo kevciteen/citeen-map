@@ -229,35 +229,8 @@ export async function lookupDpeAtAddress(
     notes.push(`Parcelle IGN : ${parcelle.idu}`);
   }
 
-  // 3. ADEME résidentiel (dpe03existant) + ADEME tertiaire (dpe-tertiaire)
-  //    en parallèle, rayons progressifs
-  let raw: AdemeRecord[] = [];
-  let usedR = 80;
-  for (const r of [25, 40, 80]) {
-    raw = await fetchAdemeDpeAround({ lat: ban.lat, lon: ban.lon, r, size: 500 });
-    usedR = r;
-    if (raw.length >= 5) break;
-  }
-  notes.push(
-    `ADEME résidentiel : ${raw.length} DPE bruts dans un rayon de ${usedR}m`,
-  );
-
-  // Tertiaire (dataset différent)
-  let rawTert: DpeTertiaireRecord[] = [];
-  try {
-    rawTert = await fetchDpeTertiaireAround({
-      lat: ban.lat,
-      lon: ban.lon,
-      radiusM: usedR,
-      size: 200,
-    });
-    notes.push(`ADEME tertiaire : ${rawTert.length} DPE bruts dans un rayon de ${usedR}m`);
-  } catch (e) {
-    notes.push(`ADEME tertiaire : erreur (${(e as Error).message})`);
-  }
-
-  // 4. Filtre strict adresse — comme dans maison.ts mais SANS le filtre
-  //    type_batiment qui faisait perdre des résultats.
+  // ★ Préparation des targets pour le filtre adresse (sans le filtre
+  //   type_batiment qui faisait perdre des résultats).
   const targetStreet = ban.street ?? ban.label;
   const targetTokens = streetTokens(targetStreet);
   const targetVoieType = extractVoieType(targetStreet);
@@ -265,7 +238,7 @@ export async function lookupDpeAtAddress(
   const targetPostcode = String(ban.postcode ?? "").trim();
   const targetCity = normalizeAscii(ban.city ?? "");
 
-  const matched = raw.filter((r) => {
+  const applyStrictFilter = (rs: AdemeRecord[]): AdemeRecord[] => rs.filter((r) => {
     if (targetPostcode) {
       const recCp = String(r.code_postal_ban ?? r.code_postal_brut ?? "").trim();
       if (recCp && recCp !== targetPostcode) return false;
@@ -290,9 +263,39 @@ export async function lookupDpeAtAddress(
     return true;
   });
 
+  // 3. ADEME résidentiel : rayons progressifs (80→150→300m).
+  //    On ré-essaie tant qu'on n'a pas de match strict (au cas où le
+  //    _geopoint ADEME est éloigné du point BAN — cas du "2 Av Lénine"
+  //    où ADEME a le DPE mais à >25m du géocodage BAN).
+  let raw: AdemeRecord[] = [];
+  let matched: AdemeRecord[] = [];
+  let usedR = 80;
+  for (const r of [80, 150, 300]) {
+    raw = await fetchAdemeDpeAround({ lat: ban.lat, lon: ban.lon, r, size: 500 });
+    usedR = r;
+    matched = applyStrictFilter(raw);
+    if (matched.length > 0) break;
+  }
   notes.push(
-    `Filtre adresse strict : ${matched.length} DPE conservés sur ${raw.length} candidats`,
+    `ADEME résidentiel : ${raw.length} DPE bruts à ${usedR}m, ${matched.length} matchent strict`,
   );
+
+  // Tertiaire (dataset différent)
+  let rawTert: DpeTertiaireRecord[] = [];
+  try {
+    rawTert = await fetchDpeTertiaireAround({
+      lat: ban.lat,
+      lon: ban.lon,
+      radiusM: usedR,
+      size: 200,
+    });
+    notes.push(`ADEME tertiaire : ${rawTert.length} DPE bruts dans un rayon de ${usedR}m`);
+  } catch (e) {
+    notes.push(`ADEME tertiaire : erreur (${(e as Error).message})`);
+  }
+
+  // 4. Le filtre adresse strict a déjà été appliqué dans la boucle
+  //    progressive ci-dessus (matched contient les DPE conservés).
 
   // 5. Segmentation par type ADEME canonique
   const items = matched.map(toItem);

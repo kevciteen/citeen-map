@@ -37,7 +37,7 @@ function pickUA(): string {
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 const NEGATIVE_TTL_MS = 60 * 60 * 1000; // erreur: 1h
 
-export type ScrapeSource = "pj" | "pb" | "118";
+export type ScrapeSource = "sirene" | "pb" | "118";
 
 export type ScrapedContact = {
   name: string | null;
@@ -105,22 +105,9 @@ async function fetchHtml(url: string): Promise<{ html: string; via: "direct" | "
 
 /* ============================== URL BUILDERS ============================== */
 
-function buildPagesJaunesUrl(opts: {
-  address?: string | null;
-  cp?: string | null;
-  city?: string | null;
-  name?: string | null;
-}): string {
-  const u = new URL("https://www.pagesjaunes.fr/recherche/");
-  // ★ PJ exige `quoiqui` non-vide (sinon 404). Si l'user ne précise pas
-  //   d'activité, on cherche toutes les entreprises à l'adresse via
-  //   un terme générique large.
-  const quoiqui = opts.name?.trim() || "entreprise";
-  const ou = [opts.address, opts.cp, opts.city].filter(Boolean).join(" ").trim();
-  u.searchParams.set("quoiqui", quoiqui);
-  if (ou) u.searchParams.set("ou", ou);
-  return u.toString();
-}
+// Pages Jaunes : retiré du scraping auto (cf. bug ToS / 404 récurrents).
+// Pour les entreprises, on utilise désormais Sirene via Recherche-Entreprises
+// data.gouv.fr (API officielle, gratuite, fiable).
 
 function buildPagesBlanchesUrl(opts: {
   name?: string | null;
@@ -220,7 +207,7 @@ function parsePagesJaunes(html: string): ScrapedContact[] {
         website,
         category,
         address,
-        source: "pj",
+        source: "pb", // helper utilisé uniquement par parsePagesBlanches
       });
     }
   }
@@ -229,11 +216,10 @@ function parsePagesJaunes(html: string): ScrapedContact[] {
 
 /**
  * Parse les résultats Pages Blanches (particuliers).
- * Format proche de PJ mais sans "activité" — on a name + tel + adresse.
+ * Réutilise le même framework HTML que PJ (même groupe Solocal).
  */
 function parsePagesBlanches(html: string): ScrapedContact[] {
-  const items: ScrapedContact[] = parsePagesJaunes(html); // même framework PJ
-  return items.map((it) => ({ ...it, source: "pb" as const }));
+  return parsePagesJaunes(html);
 }
 
 /**
@@ -241,6 +227,112 @@ function parsePagesBlanches(html: string): ScrapedContact[] {
  * 118000 a une structure HTML différente de PJ : utilise des classes
  * `card`, `card-title`, `phone-number`, `address`.
  */
+/* ============================== SIRENE (Recherche Entreprises) ============================== */
+
+/**
+ * Interroge l'API Recherche-Entreprises (data.gouv.fr) pour récupérer
+ * toutes les entreprises à une adresse. C'est l'équivalent légal et fiable
+ * de Pages Jaunes pour le B2B.
+ *
+ * Doc : https://recherche-entreprises.api.gouv.fr/
+ * Pas de clé API, pas de scraping HTML, pas de Cloudflare.
+ */
+type RechercheEntreprisesResult = {
+  results?: Array<{
+    nom_complet?: string;
+    siren?: string;
+    siege?: {
+      siret?: string;
+      adresse?: string;
+      code_postal?: string;
+      libelle_commune?: string;
+      code_naf?: string;
+      libelle_naf?: string;
+      tranche_effectif_salarie?: string;
+    };
+    matching_etablissements?: Array<{
+      siret?: string;
+      adresse?: string;
+      code_postal?: string;
+      libelle_commune?: string;
+      code_naf?: string;
+      libelle_naf?: string;
+    }>;
+  }>;
+};
+
+async function fetchSireneAtAddress(opts: {
+  address?: string | null;
+  cp?: string | null;
+  city?: string | null;
+  name?: string | null;
+}): Promise<{ html: string; url: string }> {
+  // On utilise `q=<adresse complète>` pour chercher des établissements à
+  // cette adresse. Recherche-Entreprises supporte l'adresse en query libre.
+  const queryParts = [opts.name, opts.address, opts.cp, opts.city].filter(Boolean);
+  const q = queryParts.join(" ").trim();
+  const url = new URL("https://recherche-entreprises.api.gouv.fr/search");
+  url.searchParams.set("q", q);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("per_page", "25");
+  url.searchParams.set("etat_administratif", "A"); // seulement actives
+  const r = await fetch(url, {
+    headers: { accept: "application/json" },
+    next: { revalidate: 7 * 24 * 3600 }, // 7j cache edge
+  });
+  if (!r.ok) {
+    throw new Error(`Sirene HTTP ${r.status}`);
+  }
+  const text = await r.text();
+  return { html: text, url: url.toString() };
+}
+
+function parseSireneJson(json: string): ScrapedContact[] {
+  let data: RechercheEntreprisesResult;
+  try {
+    data = JSON.parse(json) as RechercheEntreprisesResult;
+  } catch {
+    return [];
+  }
+  const items: ScrapedContact[] = [];
+  for (const r of data.results ?? []) {
+    const siege = r.siege ?? {};
+    const adresse = [siege.adresse, siege.code_postal, siege.libelle_commune]
+      .filter(Boolean)
+      .join(" ");
+    items.push({
+      name: r.nom_complet ?? null,
+      phone: null,
+      email: null,
+      website: r.siren
+        ? `https://annuaire-entreprises.data.gouv.fr/entreprise/${r.siren}`
+        : null,
+      category: siege.libelle_naf ?? null,
+      address: adresse || null,
+      source: "sirene",
+    });
+    // Ajoute aussi les autres établissements (succursales) à l'adresse
+    for (const e of r.matching_etablissements ?? []) {
+      if (e.siret === siege.siret) continue;
+      const adr = [e.adresse, e.code_postal, e.libelle_commune].filter(Boolean).join(" ");
+      items.push({
+        name: r.nom_complet ?? null,
+        phone: null,
+        email: null,
+        website: r.siren
+          ? `https://annuaire-entreprises.data.gouv.fr/etablissement/${e.siret}`
+          : null,
+        category: e.libelle_naf ?? null,
+        address: adr || null,
+        source: "sirene",
+      });
+    }
+  }
+  return items;
+}
+
+/* ============================== 118000 ============================== */
+
 function parse118000(html: string): ScrapedContact[] {
   const items: ScrapedContact[] = [];
   // Pattern 1 : cards modernes (post-redesign 2023)
@@ -323,22 +415,57 @@ export async function scrapeContacts(opts: {
   city?: string | null;
   name?: string | null;
 }): Promise<ScrapeResult> {
+  // Cas spécial Sirene : pas de scraping HTML, API JSON officielle directe
+  if (opts.source === "sirene") {
+    const cacheKey = `scrape:sirene:${JSON.stringify(opts)}`;
+    const cached = await getCached(cacheKey);
+    if (cached) return { ...cached, cached: true };
+    try {
+      const { html: json, url: sireneUrl } = await fetchSireneAtAddress(opts);
+      const items = parseSireneJson(json);
+      const result: ScrapeResult = {
+        source: "sirene",
+        cached: false,
+        fetcher: "direct",
+        url: sireneUrl,
+        htmlLength: json.length,
+        items,
+        error: items.length === 0
+          ? "0 entreprise trouvée à cette adresse (Sirene API officielle)"
+          : null,
+      };
+      await setCached(cacheKey, result, items.length > 0 ? CACHE_TTL_MS : NEGATIVE_TTL_MS);
+      return result;
+    } catch (err) {
+      const result: ScrapeResult = {
+        source: "sirene",
+        cached: false,
+        fetcher: "direct",
+        url: "",
+        htmlLength: 0,
+        items: [],
+        error: (err as Error).message,
+      };
+      await setCached(cacheKey, result, NEGATIVE_TTL_MS);
+      return result;
+    }
+  }
+
+  // Cas standards : Pages Blanches et 118000 (scraping HTML)
   const url =
-    opts.source === "pj"
-      ? buildPagesJaunesUrl(opts)
-      : opts.source === "pb"
-        ? buildPagesBlanchesUrl({
-            name: opts.name,
-            address: opts.address,
-            cp: opts.cp,
-            city: opts.city,
-          })
-        : build118000Url({
-            name: opts.name,
-            address: opts.address,
-            cp: opts.cp,
-            city: opts.city,
-          });
+    opts.source === "pb"
+      ? buildPagesBlanchesUrl({
+          name: opts.name,
+          address: opts.address,
+          cp: opts.cp,
+          city: opts.city,
+        })
+      : build118000Url({
+          name: opts.name,
+          address: opts.address,
+          cp: opts.cp,
+          city: opts.city,
+        });
 
   const cacheKey = `scrape:${opts.source}:${url}`;
   const cached = await getCached(cacheKey);
@@ -347,21 +474,20 @@ export async function scrapeContacts(opts: {
   try {
     const { html, via, statusCode } = await fetchHtml(url);
     const items =
-      opts.source === "pj"
-        ? parsePagesJaunes(html)
-        : opts.source === "pb"
-          ? parsePagesBlanches(html)
-          : parse118000(html);
+      opts.source === "pb"
+        ? parsePagesBlanches(html)
+        : parse118000(html);
     let errorMsg: string | null = null;
     if (items.length === 0) {
+      const sourceLabel = opts.source === "pb" ? "Pages Blanches" : "118000";
       if (statusCode === 404) {
-        errorMsg = `Site cible renvoie 404 (aucun résultat trouvé pour cette requête sur ${opts.source === "pj" ? "Pages Jaunes" : opts.source === "pb" ? "Pages Blanches" : "118000"})`;
+        errorMsg = `${sourceLabel} renvoie 404 (aucun résultat trouvé)`;
       } else if (statusCode >= 400) {
-        errorMsg = `Site cible HTTP ${statusCode} — probable blocage ou page d'erreur`;
+        errorMsg = `${sourceLabel} HTTP ${statusCode} — probable blocage`;
       } else if (html.length < 5000) {
-        errorMsg = `Réponse vide ou très courte (${html.length} caractères) — probable challenge Cloudflare`;
+        errorMsg = `Réponse très courte (${html.length} car.) — challenge Cloudflare possible`;
       } else {
-        errorMsg = "0 contacts parsés — sélecteurs HTML ont peut-être changé, voir l'URL source";
+        errorMsg = "0 contacts parsés — sélecteurs HTML ont peut-être changé";
       }
     }
     const result: ScrapeResult = {
