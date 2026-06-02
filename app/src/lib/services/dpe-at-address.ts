@@ -134,6 +134,27 @@ function numericPart(s: string | null | undefined): string {
   return String(s ?? "").match(/\d+/)?.[0] ?? "";
 }
 
+/**
+ * Distance haversine en mètres entre 2 coords WGS84.
+ * Utilisée pour rejeter les DPE dont les coords ADEME tombent trop loin
+ * du point BAN (cas Lénine : ~38m d'écart = parcelle voisine).
+ */
+function distanceMeters(
+  lat1: number, lon1: number, lat2: number, lon2: number,
+): number {
+  const R = 6371e3;
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const dPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const dLambda = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dPhi / 2) ** 2 +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const TERTIARY_MAX_DISTANCE_M = 20;
+
 function classify(r: AdemeRecord): DpeKind {
   const meth = String(r?.methode_application_dpe ?? "").toLowerCase();
   if (meth.includes("immeuble collectif")) return "collectif_reel";
@@ -326,20 +347,42 @@ export async function lookupDpeAtAddress(
     return true;
   });
 
-  // Cadastre check pour les candidats restants (max 10 pour éviter slow)
+  // Filtre coords STRICT pour les candidats restants :
+  //   1. Distance BAN ↔ DPE doit être ≤ 20m (cas Lénine = 38m → rejeté)
+  //   2. Si BAN a une parcelle cadastrale, le DPE doit être sur la
+  //      même parcelle (vérification IGN best-effort, kept si IGN timeout)
   const tertiaireItems: DpeAtAddressItem[] = [];
   for (const r of tertiaireCandidates.slice(0, 10)) {
-    if (parcelle) {
-      const dpeCoords = extractTertLatLon(r);
-      if (dpeCoords) {
-        const dpePar = await getParcelByPoint(dpeCoords.lat, dpeCoords.lon).catch(() => null);
-        if (dpePar && dpePar.idu !== parcelle.idu) {
-          // DPE sur une parcelle différente → rejette (cas Lénine : 37m
-          // d'écart, parcelle voisine)
-          continue;
-        }
+    const dpeCoords = extractTertLatLon(r);
+
+    // ★ Check distance brut — déterministe et rapide
+    if (dpeCoords) {
+      const dist = distanceMeters(ban.lat, ban.lon, dpeCoords.lat, dpeCoords.lon);
+      if (dist > TERTIARY_MAX_DISTANCE_M) {
+        notes.push(
+          `DPE tertiaire ${r.numero_dpe ?? "?"} rejeté : ${dist.toFixed(0)}m du point BAN (> ${TERTIARY_MAX_DISTANCE_M}m)`,
+        );
+        continue;
+      }
+    } else {
+      // Sans coords ADEME, on ne peut pas vérifier — rejette par défaut
+      notes.push(
+        `DPE tertiaire ${r.numero_dpe ?? "?"} rejeté : pas de coordonnées GPS ADEME`,
+      );
+      continue;
+    }
+
+    // Check cadastre IDU (si parcelle BAN dispo) — couche supplémentaire
+    if (parcelle && dpeCoords) {
+      const dpePar = await getParcelByPoint(dpeCoords.lat, dpeCoords.lon).catch(() => null);
+      if (dpePar && dpePar.idu !== parcelle.idu) {
+        notes.push(
+          `DPE tertiaire ${r.numero_dpe ?? "?"} rejeté : parcelle ${dpePar.idu} ≠ ${parcelle.idu}`,
+        );
+        continue;
       }
     }
+
     tertiaireItems.push(tertiaryToItem(r));
   }
 
