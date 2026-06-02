@@ -355,51 +355,59 @@ export async function lookupMaisonByAddress(
   const parcelle = await getParcelByPoint(ban.lat, ban.lon);
   if (parcelle) notes.push(`Parcelle IGN : ${parcelle.idu} (${parcelle.contenance_m2} m²)`);
 
-  // 3. ADEME (rayons progressifs 25 → 80m)
-  let raw: AdemeRecord[] = [];
-  let usedR = 80;
-  for (const r of [25, 40, 80]) {
-    raw = await fetchAdemeDpeAround({ lat: ban.lat, lon: ban.lon, r, size: 500 });
-    usedR = r;
-    if (raw.length >= 5) break;
-  }
-
-  // 4. Filtre strict : type {maison|appartement} + adresse stricte
+  // 3. ADEME : rayons progressifs ALIGNÉS sur /dpe (80→150→300m)
+  //    Avant 25→40→80 : ratait beaucoup de cas (cf. Lénine, ADEME _geopoint
+  //    décalé de >25m du point BAN). On étend tant qu'on n'a pas de match
+  //    strict (filtre appliqué dans la boucle).
   const targetTokens = streetTokens(ban.street ?? ban.label);
   const targetVoieType = extractVoieType(ban.street ?? ban.label);
   const targetHouseNumber = normalizeCompact(ban.housenumber ?? "");
   const targetPostcode = String(ban.postcode ?? "").trim();
   const targetCity = normalizeAscii(ban.city ?? "");
 
-  // Filtre adresse strict (sans le type) — pour pouvoir compter aussi
-  // l'alternative (ex: 0 maison mais 3 appartements à cette adresse)
-  const addressMatched = raw.filter((r) => {
-    if (targetPostcode) {
-      const recCp = String(r.code_postal_ban ?? r.code_postal_brut ?? "").trim();
-      if (recCp !== targetPostcode) return false;
-    }
-    if (targetCity) {
-      const recCity = normalizeAscii(r.nom_commune_ban ?? r.nom_commune_brut);
-      if (recCity !== targetCity) return false;
-    }
-    const recStreet = r.nom_rue_ban || r.adresse_ban || r.adresse_complete_brut || "";
-    if (targetVoieType) {
-      const recType = extractVoieType(recStreet);
-      if (!recType || recType !== targetVoieType) return false;
-    }
-    if (targetTokens.size > 0) {
-      const overlap = tokenOverlap(targetTokens, streetTokens(recStreet));
-      if (overlap < 0.7) return false;
-    }
-    if (targetHouseNumber) {
-      const recNo = normalizeCompact(r.numero_voie_ban ?? "");
-      if (!recNo) return false;
-      const wantN = targetHouseNumber.match(/\d+/)?.[0] ?? "";
-      const recN = recNo.match(/\d+/)?.[0] ?? "";
-      if (wantN !== recN) return false;
-    }
-    return true;
-  });
+  const applyStrictAddressFilter = (rs: AdemeRecord[]): AdemeRecord[] =>
+    rs.filter((r) => {
+      if (targetPostcode) {
+        const recCp = String(r.code_postal_ban ?? r.code_postal_brut ?? "").trim();
+        if (recCp !== targetPostcode) return false;
+      }
+      if (targetCity) {
+        const recCity = normalizeAscii(r.nom_commune_ban ?? r.nom_commune_brut);
+        if (recCity !== targetCity) return false;
+      }
+      const recStreet = r.nom_rue_ban || r.adresse_ban || r.adresse_complete_brut || "";
+      if (targetVoieType) {
+        const recType = extractVoieType(recStreet);
+        if (!recType || recType !== targetVoieType) return false;
+      }
+      if (targetTokens.size > 0) {
+        const overlap = tokenOverlap(targetTokens, streetTokens(recStreet));
+        if (overlap < 0.7) return false;
+      }
+      if (targetHouseNumber) {
+        const recNo = normalizeCompact(r.numero_voie_ban ?? "");
+        if (!recNo) return false;
+        const wantN = targetHouseNumber.match(/\d+/)?.[0] ?? "";
+        const recN = recNo.match(/\d+/)?.[0] ?? "";
+        if (wantN !== recN) return false;
+      }
+      return true;
+    });
+
+  let raw: AdemeRecord[] = [];
+  let usedR = 80;
+  let addressMatchedAll: AdemeRecord[] = [];
+  for (const r of [80, 150, 300]) {
+    raw = await fetchAdemeDpeAround({ lat: ban.lat, lon: ban.lon, r, size: 500 });
+    usedR = r;
+    addressMatchedAll = applyStrictAddressFilter(raw);
+    if (addressMatchedAll.length > 0) break;
+  }
+  notes.push(
+    `ADEME résidentiel : ${raw.length} bruts à ${usedR}m, ${addressMatchedAll.length} matchent strict`,
+  );
+
+  const addressMatched = addressMatchedAll;
 
   // Compte des résultats du type alternatif (pour suggérer à l'user)
   const altType: BatimentType = typeBatiment === "maison" ? "appartement" : "maison";
