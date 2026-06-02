@@ -29,6 +29,7 @@ import { CoproSyndicContacts } from "@/components/crm/copro-syndic-contacts";
 import { DpeAtAddress } from "@/components/dpe/dpe-at-address";
 import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import { GeorisquesCard } from "@/components/georisques/georisques-card";
+import { EntityEditPanel } from "@/components/overrides/entity-edit-panel";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -727,6 +728,21 @@ export function CoproFiche({
       <GeorisquesCard
         codeInsee={copro.code_insee_commune}
         commune={copro.commune}
+      />
+
+      {/* ÉDITION CRM (overrides + notes + tags) */}
+      <EntityEditPanel
+        entityType="copro"
+        entityRef={String(copro.id)}
+        title="Édition CRM — Notes, tags, surcharges (sur cette copro)"
+        suggestedFields={[
+          { key: "nom_personnalise", label: "Nom personnalisé" },
+          { key: "contact_president_cs", label: "Président conseil syndical" },
+          { key: "telephone_contact", label: "Téléphone contact", type: "tel" },
+          { key: "email_contact", label: "Email contact", type: "email" },
+          { key: "nb_logements_total", label: "Nb logements (correction)" },
+          { key: "commentaire_court", label: "Commentaire", type: "textarea" },
+        ]}
       />
 
       {/* RECHERCHE CONTACTS À L'ADRESSE (particuliers + occupants + pros) */}

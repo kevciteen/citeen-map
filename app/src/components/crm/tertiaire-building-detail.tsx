@@ -21,6 +21,7 @@ import { DpeBadge } from "@/components/ui/dpe-badge";
 import { jsonFetcher } from "@/lib/fetcher";
 import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import { GeorisquesCard } from "@/components/georisques/georisques-card";
+import { EntityEditPanel } from "@/components/overrides/entity-edit-panel";
 
 type Building = {
   id: number;
@@ -200,6 +201,13 @@ export function TertiaireBuildingDetail({
       <GeorisquesCard
         codeInsee={building.code_insee_commune}
         commune={building.commune}
+      />
+
+      {/* ÉDITION CRM (overrides + notes + tags) sur le bâtiment */}
+      <EntityEditPanel
+        entityType="tertiary_building"
+        entityRef={String(buildingId)}
+        title="Édition CRM — Notes, tags, surcharges (sur ce bâtiment)"
       />
 
       {/* RECHERCHE CONTACTS À L'ADRESSE */}
