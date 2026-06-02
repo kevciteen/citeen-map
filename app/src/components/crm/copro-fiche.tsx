@@ -27,7 +27,7 @@ import { CoproStreetView } from "@/components/crm/copro-streetview";
 import { CeeCoproPostes } from "@/components/crm/cee-copro-postes";
 import { CoproSyndicContacts } from "@/components/crm/copro-syndic-contacts";
 import { DpeAtAddress } from "@/components/dpe/dpe-at-address";
-import { ContactsScraper } from "@/components/address/contacts-scraper";
+import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -731,7 +731,7 @@ export function CoproFiche({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ContactsScraper
+            <ExternalContactLinks
               address={copro.adresse}
               cp={copro.code_postal}
               city={copro.commune}

@@ -26,7 +26,7 @@ import { TertiaireMap, type TertiairePoint, type MapBounds } from "@/components/
 import { TertiairePanel } from "@/components/map/tertiaire-panel";
 import { CeeTertiairePostes } from "@/components/crm/cee-tertiaire-postes";
 import { AddressAutocomplete } from "@/components/crm/address-autocomplete";
-import { ContactsScraper } from "@/components/address/contacts-scraper";
+import { ExternalContactLinks } from "@/components/address/external-contact-links";
 
 type LookupResult = {
   query: string;
@@ -339,17 +339,6 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
               <Calculator className="h-3.5 w-3.5" />
               Simuler CEE
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={enrichContacts}
-              disabled={enrichingContacts}
-              className="gap-1.5"
-              title="Récupère téléphone + site web de chaque société via OSM + Google Places (sauvegarde le bâtiment au passage)"
-            >
-              {enrichingContacts ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Phone className="h-3.5 w-3.5" />}
-              Coordonnées
-            </Button>
             {result.buildingId ? (
               <Badge variant="secondary" className="gap-1.5 text-[10px]">
                 <Database className="h-3 w-3" /> En base #{result.buildingId}
@@ -479,18 +468,18 @@ function SearchView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | 
             </ResultCard>
           </div>
 
-          {/* RECHERCHE CONTACTS À L'ADRESSE (scraper PJ/PB/118 + deep-links) */}
+          {/* LIENS ANNUAIRES OFFICIELS pour cette adresse */}
           {result.geocode ? (
             <ResultCard
               icon={<Phone className="h-4 w-4 text-primary" />}
-              title="Rechercher des contacts à cette adresse"
+              title="Annuaires officiels à cette adresse"
               right={
                 <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  scraper + liens
+                  liens directs
                 </span>
               }
             >
-              <ContactsScraper
+              <ExternalContactLinks
                 address={result.geocode.label.replace(/\s+\d{5}\s+.+$/, "").trim()}
                 cp={result.geocode.postcode ?? null}
                 city={result.geocode.city ?? null}

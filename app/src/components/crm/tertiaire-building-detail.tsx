@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { jsonFetcher } from "@/lib/fetcher";
-import { ContactsScraper } from "@/components/address/contacts-scraper";
+import { ExternalContactLinks } from "@/components/address/external-contact-links";
 
 type Building = {
   id: number;
@@ -202,7 +202,7 @@ export function TertiaireBuildingDetail({
             <Sparkles className="h-4 w-4 text-primary" />
             Rechercher des contacts à cette adresse
           </h2>
-          <ContactsScraper
+          <ExternalContactLinks
             address={building.adresse}
             cp={building.code_postal}
             city={building.commune}

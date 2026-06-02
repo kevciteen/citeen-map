@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ContactsScraper } from "@/components/address/contacts-scraper";
+import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import Link from "next/link";
 import { Loader2, MapPin, Home, Building, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -338,11 +338,10 @@ export function MaisonsAddressSearch({
                 <Card>
                   <CardContent className="p-5">
                     <p className="mb-3 text-sm font-bold">
-                      Trouver les contacts à cette adresse
+                      Annuaires officiels à cette adresse
                     </p>
-                    <ContactsScraper
+                    <ExternalContactLinks
                       address={
-                        // ★ Adresse EXACTE = numéro + rue, pas juste la rue
                         result.banResolved.housenumber && result.banResolved.street
                           ? `${result.banResolved.housenumber} ${result.banResolved.street}`
                           : result.banResolved.label.replace(/\s+\d{5}\s+.+$/, "").trim()

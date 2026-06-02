@@ -319,17 +319,6 @@ export function TertiairePanel({
             {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Rafraîchir
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={enrichContacts}
-            disabled={enriching}
-            className="gap-1.5"
-            title="Récupère téléphone, site web, horaires (OSM puis Google Places)"
-          >
-            {enriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-            Coordonnées
-          </Button>
         </div>
 
         {/* DPE bloc */}
@@ -530,16 +519,6 @@ function OccupantPanelRow({ o, accent, buildingId, onEnriched }: {
           ) : null}
         </div>
         <div className="flex flex-col items-end gap-1">
-          {!hasContacts ? (
-            <button
-              onClick={enrich}
-              disabled={enriching}
-              className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-900 hover:bg-blue-200 disabled:opacity-50"
-              title="Récupérer téléphone, site web (OSM + Google)"
-            >
-              {enriching ? "…" : "📞 Trouver"}
-            </button>
-          ) : null}
           {o.siren ? (
             <a
               href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
