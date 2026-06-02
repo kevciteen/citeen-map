@@ -9,10 +9,11 @@
  *   - Section "Recherche contacts à cette adresse"
  *   - Lien vers /dpe?q=adresse pour voir TOUS les DPE ADEME
  */
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   MapPin, Building2, Phone, Globe, Mail, ExternalLink, Loader2,
-  Sparkles, FileText, Users, Zap, ScanSearch,
+  Sparkles, FileText, Users, Zap, ScanSearch, Pencil,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -245,6 +246,7 @@ export function TertiaireBuildingDetail({
 }
 
 function OccupantRow({ occupant: o }: { occupant: Occupant }) {
+  const [editOpen, setEditOpen] = useState(false);
   const hasContact = Boolean(o.phone || o.website || o.email);
   return (
     <li className="rounded-md border border-border bg-secondary/30 p-2 text-xs">
@@ -289,18 +291,47 @@ function OccupantRow({ occupant: o }: { occupant: Occupant }) {
             </div>
           ) : null}
         </div>
-        {o.siren ? (
-          <a
-            href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
-            target="_blank"
-            rel="noreferrer"
-            className="text-muted-foreground hover:text-primary"
-            title="Annuaire Entreprises"
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setEditOpen((v) => !v)}
+            title="Notes, tags, contacts personnalisés (CRM)"
+            className={
+              "rounded p-1 text-[9px] font-semibold " +
+              (editOpen
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary/70 text-muted-foreground hover:bg-secondary")
+            }
           >
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        ) : null}
+            <Pencil className="h-3 w-3" />
+          </button>
+          {o.siren ? (
+            <a
+              href={`https://annuaire-entreprises.data.gouv.fr/entreprise/${o.siren}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-muted-foreground hover:text-primary"
+              title="Annuaire Entreprises"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+        </div>
       </div>
+      {editOpen ? (
+        <div className="mt-2 border-t border-border/60 pt-2">
+          <EntityEditPanel
+            entityType="occupant"
+            entityRef={String(o.id)}
+            title="Édition CRM (cet occupant)"
+            suggestedFields={[
+              { key: "contact_principal", label: "Contact" },
+              { key: "telephone_direct", label: "Téléphone direct", type: "tel" },
+              { key: "email_direct", label: "Email direct", type: "email" },
+              { key: "commentaire_court", label: "Note", type: "textarea" },
+            ]}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

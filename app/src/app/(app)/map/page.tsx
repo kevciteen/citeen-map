@@ -2,6 +2,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Topbar } from "@/components/layout/topbar";
 import { MapView, type CoproPoint, type MaisonPoint, type TertiairePoint, type MapBounds } from "@/components/map/map-view";
+import { MapQuickActions } from "@/components/map/map-quick-actions";
 import {
   FiltersBar,
   DEFAULT_FILTERS,
@@ -288,6 +289,23 @@ export default function MapPage() {
             setHasSearched(false);
           }}
           resultCount={count + maisonsCount + tertiaryCount}
+        />
+
+        {/* Bouton Passoires F+G + Légende DPE (top-left flottants) */}
+        <MapQuickActions
+          dpeClasses={filters.dpeClasses}
+          onSetDpe={(cls) => {
+            const next = { ...filters, dpeClasses: cls };
+            setFilters(next);
+          }}
+          onSubmit={() => {
+            // Called by MapQuickActions just après onSetDpe — on lit la valeur
+            // courante via une callback functional setFilters pour fiabilité
+            setFilters((prev) => {
+              runSearch(prev);
+              return prev;
+            });
+          }}
         />
 
         <div className="absolute right-4 top-4 z-10 w-[420px] max-w-[calc(100vw-2rem)]">
