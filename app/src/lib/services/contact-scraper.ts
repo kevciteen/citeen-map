@@ -37,7 +37,7 @@ function pickUA(): string {
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 const NEGATIVE_TTL_MS = 60 * 60 * 1000; // erreur: 1h
 
-export type ScrapeSource = "sirene" | "pb" | "118";
+export type ScrapeSource = "sirene" | "118";
 
 export type ScrapedContact = {
   name: string | null;
@@ -109,22 +109,9 @@ async function fetchHtml(url: string): Promise<{ html: string; via: "direct" | "
 // Pour les entreprises, on utilise désormais Sirene via Recherche-Entreprises
 // data.gouv.fr (API officielle, gratuite, fiable).
 
-function buildPagesBlanchesUrl(opts: {
-  name?: string | null;
-  address?: string | null;
-  cp?: string | null;
-  city?: string | null;
-}): string {
-  const u = new URL("https://www.pagesjaunes.fr/pagesblanches/recherche");
-  const quoiqui = opts.name?.trim() || "";
-  // ★ Inclut l'adresse dans `ou=` — PB est plus précis qu'avec CP+ville seul
-  //   (note : sans `quoiqui`, les résultats restent limités car PB est
-  //   designed name-first)
-  const ou = [opts.address, opts.cp, opts.city].filter(Boolean).join(" ").trim();
-  if (quoiqui) u.searchParams.set("quoiqui", quoiqui);
-  if (ou) u.searchParams.set("ou", ou);
-  return u.toString();
-}
+// Pages Blanches retirée : Solocal l'a rendue name-first depuis 2015,
+// inexploitable par adresse seule. Pour les particuliers, on utilise
+// désormais 118000.fr qui supporte vraiment la recherche par adresse.
 
 function build118000Url(opts: {
   name?: string | null;
@@ -207,19 +194,11 @@ function parsePagesJaunes(html: string): ScrapedContact[] {
         website,
         category,
         address,
-        source: "pb", // helper utilisé uniquement par parsePagesBlanches
+        source: "118", // helper interne, source remplacée par caller
       });
     }
   }
   return items;
-}
-
-/**
- * Parse les résultats Pages Blanches (particuliers).
- * Réutilise le même framework HTML que PJ (même groupe Solocal).
- */
-function parsePagesBlanches(html: string): ScrapedContact[] {
-  return parsePagesJaunes(html);
 }
 
 /**
@@ -451,21 +430,13 @@ export async function scrapeContacts(opts: {
     }
   }
 
-  // Cas standards : Pages Blanches et 118000 (scraping HTML)
-  const url =
-    opts.source === "pb"
-      ? buildPagesBlanchesUrl({
-          name: opts.name,
-          address: opts.address,
-          cp: opts.cp,
-          city: opts.city,
-        })
-      : build118000Url({
-          name: opts.name,
-          address: opts.address,
-          cp: opts.cp,
-          city: opts.city,
-        });
+  // 118000.fr (scraping HTML via ScrapingBee)
+  const url = build118000Url({
+    name: opts.name,
+    address: opts.address,
+    cp: opts.cp,
+    city: opts.city,
+  });
 
   const cacheKey = `scrape:${opts.source}:${url}`;
   const cached = await getCached(cacheKey);
@@ -473,17 +444,13 @@ export async function scrapeContacts(opts: {
 
   try {
     const { html, via, statusCode } = await fetchHtml(url);
-    const items =
-      opts.source === "pb"
-        ? parsePagesBlanches(html)
-        : parse118000(html);
+    const items = parse118000(html);
     let errorMsg: string | null = null;
     if (items.length === 0) {
-      const sourceLabel = opts.source === "pb" ? "Pages Blanches" : "118000";
       if (statusCode === 404) {
-        errorMsg = `${sourceLabel} renvoie 404 (aucun résultat trouvé)`;
+        errorMsg = "118000 renvoie 404 (aucun résultat trouvé)";
       } else if (statusCode >= 400) {
-        errorMsg = `${sourceLabel} HTTP ${statusCode} — probable blocage`;
+        errorMsg = `118000 HTTP ${statusCode} — probable blocage`;
       } else if (html.length < 5000) {
         errorMsg = `Réponse très courte (${html.length} car.) — challenge Cloudflare possible`;
       } else {

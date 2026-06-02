@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Search, Loader2, Phone, Mail, Globe, MapPin,
-  Users2, ExternalLink, Copy, ChevronDown,
+  ExternalLink, Copy, ChevronDown,
   ChevronUp, RefreshCw, BookOpenText, Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { ExternalContactLinks } from "./external-contact-links";
 
-type ScrapeSource = "sirene" | "pb" | "118";
+type ScrapeSource = "sirene" | "118";
 
 type ScrapedContact = {
   name: string | null;
@@ -56,7 +56,6 @@ export function ContactsScraper({
   const [tab, setTab] = useState<"external" | "scrape">("scrape");
   const [name, setName] = useState("");
   const [sireneResult, setSireneResult] = useState<ScrapeResult | null>(null);
-  const [pbResult, setPbResult] = useState<ScrapeResult | null>(null);
   const [r118Result, setR118Result] = useState<ScrapeResult | null>(null);
   const autoTriggeredRef = useRef<string | null>(null);
 
@@ -80,7 +79,6 @@ export function ContactsScraper({
       },
       onSuccess: (data: ScrapeResult) => {
         if (data.source === "sirene") setSireneResult(data);
-        else if (data.source === "pb") setPbResult(data);
         else if (data.source === "118") setR118Result(data);
         if (data.items.length > 0) {
           toast.success(`${labelOf(data.source)} : ${data.items.length} contact(s)`);
@@ -93,8 +91,6 @@ export function ContactsScraper({
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const sireneMutation = makeMutation("sirene");
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const pbMutation = makeMutation("pb");
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const r118Mutation = makeMutation("118");
 
@@ -139,31 +135,33 @@ export function ContactsScraper({
         <div className="space-y-3">
           {/* Bandeau info sources */}
           <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-[11px]">
-            <strong>Sources :</strong>{" "}
+            <strong>Sources légales par adresse :</strong>{" "}
             <span className="text-foreground">
               <strong>Sirene</strong> (API officielle data.gouv.fr — entreprises B2B,
               gratuit + fiable)
             </span>
             {" · "}
-            <strong>Pages Blanches</strong> (B2C — nécessite un nom pour de bons résultats)
-            {" · "}
-            <strong>118000.fr</strong> (recherche par adresse — particuliers + pros)
+            <strong>118000.fr</strong> (recherche par adresse — particuliers + commerces)
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Pages Blanches retirée : Solocal l&apos;a rendue name-first depuis 2015,
+              inexploitable par adresse seule.
+            </p>
           </div>
 
-          {/* Champ nom optionnel (cible PB) */}
+          {/* Champ nom optionnel (filtre supplémentaire pour 118000) */}
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Nom à chercher (optionnel — utile pour Pages Blanches)
+              Affiner par nom (optionnel)
             </label>
             <Input
-              placeholder="ex: Dupont (ou laisse vide)"
+              placeholder="ex: Dupont (filtre 118000)"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="h-8"
             />
           </div>
 
-          {/* Boutons scraper */}
+          {/* Boutons re-scrap (les 2 sources auto-déclenchées au mount) */}
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -181,19 +179,6 @@ export function ContactsScraper({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => pbMutation.mutate()}
-              disabled={pbMutation.isPending}
-            >
-              {pbMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Users2 className="h-3.5 w-3.5" />
-              )}
-              Pages Blanches (B2C — saisir un nom)
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
               onClick={() => r118Mutation.mutate()}
               disabled={r118Mutation.isPending}
             >
@@ -202,7 +187,7 @@ export function ContactsScraper({
               ) : (
                 <BookOpenText className="h-3.5 w-3.5" />
               )}
-              {r118Result ? "Re-scrap 118000" : "118000 (par adresse)"}
+              {r118Result ? "Re-scrap 118000" : "118000 (par adresse — particuliers + commerces)"}
             </Button>
           </div>
 
@@ -221,25 +206,13 @@ export function ContactsScraper({
           {/* Résultats 118000 */}
           {r118Result ? (
             <ResultBlock
-              title="118000.fr (recherche par adresse)"
+              title="118000.fr (particuliers + commerces par adresse)"
               icon={BookOpenText}
               result={r118Result}
               onRefresh={() => r118Mutation.mutate()}
             />
           ) : r118Mutation.isPending ? (
             <LoadingBlock title="118000.fr (par adresse)" icon={BookOpenText} />
-          ) : null}
-
-          {/* Résultats PB (button-only — manuel) */}
-          {pbResult ? (
-            <ResultBlock
-              title="Pages Blanches (particuliers)"
-              icon={Users2}
-              result={pbResult}
-              onRefresh={() => pbMutation.mutate()}
-            />
-          ) : pbMutation.isPending ? (
-            <LoadingBlock title="Pages Blanches" icon={Users2} />
           ) : null}
         </div>
       )}
@@ -248,7 +221,7 @@ export function ContactsScraper({
 }
 
 function labelOf(s: ScrapeSource): string {
-  return s === "sirene" ? "Sirene" : s === "pb" ? "Pages Blanches" : "118000";
+  return s === "sirene" ? "Sirene" : "118000";
 }
 
 function LoadingBlock({

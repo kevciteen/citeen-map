@@ -33,9 +33,9 @@ export async function POST(req: NextRequest) {
     name?: string;
   };
 
-  if (body.source !== "sirene" && body.source !== "pb" && body.source !== "118") {
+  if (body.source !== "sirene" && body.source !== "118") {
     return NextResponse.json(
-      { error: "source doit être 'sirene', 'pb' ou '118'" },
+      { error: "source doit être 'sirene' ou '118'" },
       { status: 400 },
     );
   }
