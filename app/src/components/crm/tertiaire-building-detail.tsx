@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DpeBadge } from "@/components/ui/dpe-badge";
 import { jsonFetcher } from "@/lib/fetcher";
 import { ExternalContactLinks } from "@/components/address/external-contact-links";
+import { GeorisquesCard } from "@/components/georisques/georisques-card";
 
 type Building = {
   id: number;
@@ -194,6 +195,12 @@ export function TertiaireBuildingDetail({
           </ul>
         )}
       </section>
+
+      {/* RISQUES NATURELS ET TECHNOLOGIQUES */}
+      <GeorisquesCard
+        codeInsee={building.code_insee_commune}
+        commune={building.commune}
+      />
 
       {/* RECHERCHE CONTACTS À L'ADRESSE */}
       {building.adresse ? (

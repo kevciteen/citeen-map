@@ -28,6 +28,7 @@ import { CeeCoproPostes } from "@/components/crm/cee-copro-postes";
 import { CoproSyndicContacts } from "@/components/crm/copro-syndic-contacts";
 import { DpeAtAddress } from "@/components/dpe/dpe-at-address";
 import { ExternalContactLinks } from "@/components/address/external-contact-links";
+import { GeorisquesCard } from "@/components/georisques/georisques-card";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -721,6 +722,12 @@ export function CoproFiche({
 
       {/* CONTACTS SYNDIC (Sirene + auto OSM/Google + manuel) */}
       <CoproSyndicContacts syndicName={copro.syndic ?? null} />
+
+      {/* RISQUES NATURELS ET TECHNOLOGIQUES (Géorisques) */}
+      <GeorisquesCard
+        codeInsee={copro.code_insee_commune}
+        commune={copro.commune}
+      />
 
       {/* RECHERCHE CONTACTS À L'ADRESSE (particuliers + occupants + pros) */}
       {copro.adresse ? (

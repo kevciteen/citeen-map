@@ -8,6 +8,7 @@
   "crons": [
     { "path": "/api/cron/relances", "schedule": "0 7 * * *" },
     { "path": "/api/cron/backup", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/directory-resync", "schedule": "30 3 * * *" }
+    { "path": "/api/cron/directory-resync", "schedule": "30 3 * * *" },
+    { "path": "/api/cron/copros-refresh", "schedule": "0 4 1 * *" }
   ]
 }

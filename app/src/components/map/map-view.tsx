@@ -196,7 +196,7 @@ export function MapView({
         source: "copros",
         filter: ["!", ["has", "point_count"]],
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 16, 11],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 5, 14, 8, 16, 13],
           "circle-color": [
             "match",
             ["coalesce", ["get", "dpe"], "NC"],
@@ -209,7 +209,9 @@ export function MapView({
             "G", DPE_COLORS.G,
             DPE_COLORS.NC,
           ],
-          "circle-opacity": 0.25,
+          "circle-opacity": 0.85,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#ffffff",
         },
       });
 

@@ -371,35 +371,47 @@ export async function lookupMaisonByAddress(
   const targetPostcode = String(ban.postcode ?? "").trim();
   const targetCity = normalizeAscii(ban.city ?? "");
 
-  const matched = raw
+  // Filtre adresse strict (sans le type) — pour pouvoir compter aussi
+  // l'alternative (ex: 0 maison mais 3 appartements à cette adresse)
+  const addressMatched = raw.filter((r) => {
+    if (targetPostcode) {
+      const recCp = String(r.code_postal_ban ?? r.code_postal_brut ?? "").trim();
+      if (recCp !== targetPostcode) return false;
+    }
+    if (targetCity) {
+      const recCity = normalizeAscii(r.nom_commune_ban ?? r.nom_commune_brut);
+      if (recCity !== targetCity) return false;
+    }
+    const recStreet = r.nom_rue_ban || r.adresse_ban || r.adresse_complete_brut || "";
+    if (targetVoieType) {
+      const recType = extractVoieType(recStreet);
+      if (!recType || recType !== targetVoieType) return false;
+    }
+    if (targetTokens.size > 0) {
+      const overlap = tokenOverlap(targetTokens, streetTokens(recStreet));
+      if (overlap < 0.7) return false;
+    }
+    if (targetHouseNumber) {
+      const recNo = normalizeCompact(r.numero_voie_ban ?? "");
+      if (!recNo) return false;
+      const wantN = targetHouseNumber.match(/\d+/)?.[0] ?? "";
+      const recN = recNo.match(/\d+/)?.[0] ?? "";
+      if (wantN !== recN) return false;
+    }
+    return true;
+  });
+
+  // Compte des résultats du type alternatif (pour suggérer à l'user)
+  const altType: BatimentType = typeBatiment === "maison" ? "appartement" : "maison";
+  const altCount = addressMatched.filter((r) => isBatimentType(r, altType)).length;
+  if (altCount > 0) {
+    notes.push(
+      `↳ ${altCount} DPE "${altType}" trouvé(s) à la même adresse — utilise /dpe pour voir l'inventaire complet`,
+    );
+  }
+
+  const matched = addressMatched
     .filter((r) => isBatimentType(r, typeBatiment))
-    .filter((r) => {
-      if (targetPostcode) {
-        const recCp = String(r.code_postal_ban ?? r.code_postal_brut ?? "").trim();
-        if (recCp !== targetPostcode) return false;
-      }
-      if (targetCity) {
-        const recCity = normalizeAscii(r.nom_commune_ban ?? r.nom_commune_brut);
-        if (recCity !== targetCity) return false;
-      }
-      const recStreet = r.nom_rue_ban || r.adresse_ban || r.adresse_complete_brut || "";
-      if (targetVoieType) {
-        const recType = extractVoieType(recStreet);
-        if (!recType || recType !== targetVoieType) return false;
-      }
-      if (targetTokens.size > 0) {
-        const overlap = tokenOverlap(targetTokens, streetTokens(recStreet));
-        if (overlap < 0.7) return false;
-      }
-      if (targetHouseNumber) {
-        const recNo = normalizeCompact(r.numero_voie_ban ?? "");
-        if (!recNo) return false;
-        const wantN = targetHouseNumber.match(/\d+/)?.[0] ?? "";
-        const recN = recNo.match(/\d+/)?.[0] ?? "";
-        if (wantN !== recN) return false;
-      }
-      return true;
-    })
     .map(toMaisonDpe);
 
   // 5. (Optionnel) cadastre check sur chaque DPE matché — non bloquant
