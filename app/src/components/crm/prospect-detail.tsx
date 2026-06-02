@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CommentsThread } from "@/components/collab/comments-thread";
+import { SendFromTemplate } from "@/components/crm/send-from-template";
 import {
   PIPELINE_ORDER,
   stageMeta,
@@ -448,6 +449,15 @@ export function ProspectDetail({
                     ))}
                   </ul>
                 )}
+                <div className="pt-1">
+                  <SendFromTemplate
+                    scope="prospect"
+                    prospectId={id}
+                    coproId={prospect.copro_id ?? undefined}
+                    contacts={contacts}
+                    label="Email au contact"
+                  />
+                </div>
               </CardContent>
             </Card>
 
@@ -656,9 +666,9 @@ function AssignmentPicker({
 }) {
   const [users, setUsers] = useState<{ id: number; email: string; name: string | null }[]>([]);
   useEffect(() => {
-    fetch("/api/users/mention-search?limit=50")
+    fetch("/api/team")
       .then((r) => r.json())
-      .then((j) => setUsers(j.items ?? []))
+      .then((j) => setUsers(j.team ?? []))
       .catch(() => setUsers([]));
   }, []);
   return (

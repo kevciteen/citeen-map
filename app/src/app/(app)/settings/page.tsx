@@ -1,5 +1,7 @@
 import { Topbar } from "@/components/layout/topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import Link from "next/link";
+import { Mail } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -7,6 +9,18 @@ export default function SettingsPage() {
       <Topbar title="Paramètres" subtitle="Configuration de l'espace de travail" />
       <div className="flex-1 overflow-y-auto bg-secondary/30 p-6">
         <div className="mx-auto max-w-3xl space-y-3">
+          <Link
+            href="/settings/email-templates"
+            className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-secondary/30"
+          >
+            <Mail className="h-5 w-5 text-primary" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold">Modèles d&apos;email</p>
+              <p className="text-xs text-muted-foreground">
+                Crée et partage des templates de prospection (objet + corps + variables)
+              </p>
+            </div>
+          </Link>
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Sources de données</CardTitle>

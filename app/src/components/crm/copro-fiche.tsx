@@ -30,6 +30,8 @@ import { DpeAtAddress } from "@/components/dpe/dpe-at-address";
 import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import { GeorisquesCard } from "@/components/georisques/georisques-card";
 import { EntityEditPanel } from "@/components/overrides/entity-edit-panel";
+import { PrioriteScoreCard } from "@/components/crm/priorite-score-card";
+import { SendFromTemplate } from "@/components/crm/send-from-template";
 import { toast } from "sonner";
 
 const DPE_GRADIENT: Record<string, string> = {
@@ -312,7 +314,10 @@ export function CoproFiche({
           </CardContent>
         </Card>
 
-        <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-secondary/30 print:hidden">
+        <div className="space-y-3 print:hidden">
+          <PrioriteScoreCard coproId={copro.id} />
+
+        <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-secondary/30">
           <CardHeader>
             <CardTitle className="text-sm">Actions</CardTitle>
           </CardHeader>
@@ -353,6 +358,11 @@ export function CoproFiche({
             >
               <FileText className="h-3.5 w-3.5" /> Exporter Excel (fiche complète)
             </a>
+            <SendFromTemplate
+              scope="copro"
+              coproId={copro.id}
+              label="Email depuis modèle"
+            />
             <a
               href={`/api/export/copros.xlsx?ids=${copro.id}`}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-secondary"
@@ -377,6 +387,7 @@ export function CoproFiche({
             ) : null}
           </CardContent>
         </Card>
+        </div>
       </div>
 
       {/* STREET VIEW */}

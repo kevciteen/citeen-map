@@ -9,10 +9,11 @@
  *  - activity : notes/tags récents cross-entité
  *  - prospectsMap : points pour la mini-carte (lat, lon, dpe)
  */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { ensureAuth } from "@/lib/auth/guards";
 import { ensureEntityOverrides } from "@/lib/db/ensure-entity-overrides";
+import { ensureProspectExtras } from "@/lib/db/ensure-prospect-extras";
 
 export const runtime = "nodejs";
 
@@ -25,10 +26,18 @@ type Stage =
   | "won"
   | "lost";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await ensureAuth();
   if (guard instanceof NextResponse) return guard;
-  await ensureEntityOverrides();
+  await Promise.all([ensureEntityOverrides(), ensureProspectExtras()]);
+
+  // Filtre "Mes prospects" : si ?mine=1, on filtre toutes les requêtes
+  // prospects pour ne garder que ceux assignés à l'utilisateur courant
+  // (assigned_user_id = FK users.id — convention en place via ensure-prospect-extras).
+  const mine = req.nextUrl.searchParams.get("mine") === "1";
+  const meId = Number(guard.id);
+  const mineP = mine ? `AND p.assigned_user_id = ${meId}` : "";
+  const mineNoAlias = mine ? `AND assigned_user_id = ${meId}` : "";
 
   // === KPIs ===
   // 1. Passoires F+G en pipeline actif (non won/lost)
@@ -39,6 +48,7 @@ export async function GET() {
     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
     WHERE p.stage NOT IN ('won', 'lost')
       AND (e.classe_finale IN ('F','G'))
+      ${mineP}
   `);
   // 2. Relances dues aujourd'hui
   const relancesRow = await db.get<{ n: number }>(`
@@ -46,11 +56,13 @@ export async function GET() {
     WHERE next_action_at IS NOT NULL
       AND next_action_at <= unixepoch()
       AND stage NOT IN ('won', 'lost')
+      ${mineNoAlias}
   `);
   // 3. Pipeline value (somme estimated_value des stages actifs)
   const pipelineRow = await db.get<{ v: number }>(`
     SELECT COALESCE(SUM(estimated_value), 0) AS v FROM prospects
     WHERE stage IN ('meeting', 'proposal')
+    ${mineNoAlias}
   `);
   // 4. Taux conversion (won / total non-lead)
   const convRow = await db.get<{ total: number; won: number }>(`
@@ -58,6 +70,8 @@ export async function GET() {
       SUM(CASE WHEN stage != 'lead' THEN 1 ELSE 0 END) AS total,
       SUM(CASE WHEN stage = 'won' THEN 1 ELSE 0 END) AS won
     FROM prospects
+    WHERE 1=1
+    ${mineNoAlias}
   `);
   const conv = convRow && convRow.total > 0
     ? (convRow.won / convRow.total) * 100 : 0;
@@ -74,19 +88,25 @@ export async function GET() {
     copro_adresse: string | null;
     copro_commune: string | null;
     classe_finale: string | null;
+    assigned_user_id: number | null;
+    assigned_user_name: string | null;
   }>(`
     SELECT
       p.id, p.next_action_at, p.next_action_label, p.stage,
       COALESCE(c.nom_copro, p.custom_label, c.adresse) AS label,
       c.id AS copro_id, c.nom_copro AS copro_nom,
       c.adresse AS copro_adresse, c.commune AS copro_commune,
-      e.classe_finale
+      e.classe_finale,
+      p.assigned_user_id,
+      COALESCE(u.name, u.email) AS assigned_user_name
     FROM prospects p
     LEFT JOIN copros c ON c.id = p.copro_id
     LEFT JOIN dpe_estimates e ON e.copro_id = c.id
+    LEFT JOIN users u ON u.id = p.assigned_user_id
     WHERE p.next_action_at IS NOT NULL
       AND p.next_action_at <= unixepoch() + 86400
       AND p.stage NOT IN ('won', 'lost')
+      ${mineP}
     ORDER BY p.next_action_at ASC
     LIMIT 20
   `);
@@ -95,6 +115,7 @@ export async function GET() {
   const stageCounts = await db.all<{ stage: Stage; n: number }>(`
     SELECT stage, COUNT(*) AS n FROM prospects
     WHERE stage NOT IN ('won', 'lost')
+    ${mineNoAlias}
     GROUP BY stage
   `);
 
@@ -116,6 +137,7 @@ export async function GET() {
       LEFT JOIN copros c ON c.id = p.copro_id
       LEFT JOIN dpe_estimates e ON e.copro_id = c.id
       WHERE p.stage IN (${sampleStages.map(() => "?").join(",")})
+      ${mineP}
     )
     SELECT id, stage, label, classe_finale FROM ranked WHERE rn <= 3
   `, sampleStages);
@@ -183,6 +205,7 @@ export async function GET() {
     WHERE p.stage NOT IN ('won', 'lost')
       AND COALESCE(c.lat, p.custom_lat) IS NOT NULL
       AND COALESCE(c.lon, p.custom_lon) IS NOT NULL
+      ${mineP}
     LIMIT 500
   `);
 

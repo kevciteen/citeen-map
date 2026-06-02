@@ -12,11 +12,12 @@
  *  6. Mini-carte des prospects actifs
  */
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import Link from "next/link";
 import {
   Activity, AlertCircle, Calendar, ChevronRight, Flame,
   Kanban, Loader2, MapPin, Phone, Sparkles, StickyNote,
-  Tag as TagIcon, TrendingUp, Users,
+  Tag as TagIcon, TrendingUp, Users, UserCheck,
 } from "lucide-react";
 import { jsonFetcher } from "@/lib/fetcher";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,7 @@ import { stageMeta, formatCurrency, PIPELINE_ORDER } from "@/lib/utils";
 import {
   AnnuaireMap, DPE_COLORS, type AnnuaireMapPoint,
 } from "@/components/annuaire/annuaire-map";
+import { AssignDropdown } from "@/components/crm/assign-dropdown";
 
 type Stage = "lead" | "to_contact" | "contacted" | "meeting" | "proposal" | "won" | "lost";
 
@@ -46,6 +48,8 @@ type CockpitData = {
     copro_adresse: string | null;
     copro_commune: string | null;
     classe_finale: string | null;
+    assigned_user_id: number | null;
+    assigned_user_name: string | null;
   }>;
   kanban: {
     counts: Array<{ stage: Stage; n: number }>;
@@ -69,15 +73,38 @@ type CockpitData = {
 };
 
 export function CockpitView() {
+  const [mine, setMine] = useState(false);
   const { data, isPending } = useQuery({
-    queryKey: ["cockpit"],
-    queryFn: ({ signal }) => jsonFetcher<CockpitData>("/api/cockpit", signal),
+    queryKey: ["cockpit", { mine }],
+    queryFn: ({ signal }) =>
+      jsonFetcher<CockpitData>(`/api/cockpit${mine ? "?mine=1" : ""}`, signal),
     staleTime: 30 * 1000,
     refetchInterval: 60 * 1000,
   });
 
   return (
     <div className="mx-auto max-w-7xl space-y-4 p-6">
+      {/* ============= TOGGLE Mes prospects ============= */}
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-2">
+        <div className="text-xs text-muted-foreground">
+          Filtre actif :{" "}
+          <span className="font-medium text-foreground">
+            {mine ? "Mes prospects (assignés à moi)" : "Toute l'équipe"}
+          </span>
+        </div>
+        <button
+          onClick={() => setMine((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition ${
+            mine
+              ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+              : "border-border bg-secondary text-foreground hover:bg-secondary/80"
+          }`}
+        >
+          <UserCheck className="h-3.5 w-3.5" />
+          {mine ? "Voir tout" : "Mes prospects"}
+        </button>
+      </div>
+
       {/* ============= KPIs ============= */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
@@ -154,11 +181,17 @@ export function CockpitView() {
                   <p className="truncate text-[10px] text-muted-foreground">
                     {t.next_action_label || "À relancer"}
                     {t.copro_commune ? ` · ${t.copro_commune}` : ""}
+                    {t.assigned_user_name ? ` · 🧑 ${t.assigned_user_name}` : ""}
                   </p>
                 </div>
                 {t.classe_finale ? (
                   <DpeBadge classe={t.classe_finale} className="!h-5 !min-w-[20px] !text-[10px]" />
                 ) : null}
+                <AssignDropdown
+                  prospectId={t.id}
+                  currentUserId={t.assigned_user_id}
+                />
+
                 <span
                   className="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wider"
                   style={{
@@ -244,6 +277,9 @@ export function CockpitView() {
           </div>
         )}
       </Section>
+
+      {/* ============= TOP PRIORITÉS (copros scorées) ============= */}
+      <TopPrioritiesSection />
 
       {/* ============= TOP SYNDICS À RELANCER + ACTIVITÉ RÉCENTE ============= */}
       <div className="grid gap-4 lg:grid-cols-2">
@@ -351,6 +387,96 @@ export function CockpitView() {
         )}
       </Section>
     </div>
+  );
+}
+
+/* ============================== TOP PRIORITÉS ============================== */
+
+type PriorityItem = {
+  id: number;
+  nom_copro: string | null;
+  adresse: string | null;
+  commune: string | null;
+  syndic: string | null;
+  nb_lots: number | null;
+  classe_finale: string | null;
+  score: number;
+  has_prospect: number;
+  prospect_stage: string | null;
+};
+
+function TopPrioritiesSection() {
+  const { data, isPending } = useQuery({
+    queryKey: ["copros-priority", { limit: 8, min: 40 }],
+    queryFn: ({ signal }) =>
+      jsonFetcher<{ items: PriorityItem[] }>(
+        "/api/copros/priority?limit=8&min=40",
+        signal,
+      ),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  return (
+    <Section
+      title="Top priorités — copros à attaquer maintenant"
+      icon={Sparkles}
+      subtitle="Score heuristique : passoire + volume + dynamique syndic"
+      right={
+        <Link href="/copros?sort=score" className="text-xs text-primary hover:underline">
+          Voir tout le classement →
+        </Link>
+      }
+    >
+      {isPending ? (
+        <Skeleton className="h-32 w-full" />
+      ) : data && data.items.length > 0 ? (
+        <ul className="grid gap-1.5 sm:grid-cols-2">
+          {data.items.map((c) => (
+            <li
+              key={c.id}
+              className="flex items-center gap-2 rounded-md border border-border bg-card p-2 text-xs hover:bg-secondary/30"
+            >
+              <div
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md font-bold tabular-nums ${
+                  c.score >= 70
+                    ? "bg-rose-100 text-rose-800"
+                    : c.score >= 50
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-sky-100 text-sky-800"
+                }`}
+              >
+                {c.score}
+              </div>
+              <div className="min-w-0 flex-1">
+                <Link
+                  href={`/copros/${c.id}`}
+                  className="block truncate font-semibold hover:text-primary"
+                >
+                  {c.nom_copro || c.adresse || `Copro #${c.id}`}
+                </Link>
+                <p className="truncate text-[10px] text-muted-foreground">
+                  {c.commune ?? ""}
+                  {c.syndic ? ` · ${c.syndic}` : ""}
+                  {c.nb_lots ? ` · ${c.nb_lots} lots` : ""}
+                </p>
+              </div>
+              {c.classe_finale ? (
+                <DpeBadge classe={c.classe_finale} className="!h-5 !min-w-[20px] !text-[10px]" />
+              ) : null}
+              {c.has_prospect ? (
+                <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                  pipeline
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-md border border-border bg-secondary/30 p-4 text-center text-xs text-muted-foreground">
+          Aucune copro au-dessus du seuil de priorité (40) — ajuste tes filtres ou importe plus de données.
+        </p>
+      )}
+    </Section>
   );
 }
 
