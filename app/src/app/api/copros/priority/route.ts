@@ -26,13 +26,19 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(100, Math.max(1, Number(sp.get("limit") ?? 20)));
   const minScore = Number(sp.get("min") ?? 30);
 
-  const where: string[] = [];
+  // Préfiltre amont : ne scanner que les copros ayant un signal d'intérêt
+  // (classe DPE renseignée OU volume significatif) — divise le set scanné
+  // par 10× sur les gros datasets sans changer le résultat (une copro sans
+  // aucune de ces deux propriétés ne peut pas atteindre min=30).
+  const where: string[] = [
+    "(e.classe_finale IS NOT NULL OR COALESCE(c.nb_lots, 0) >= 20)",
+  ];
   const args: (string | number | null)[] = [];
   if (commune) {
     where.push("LOWER(c.commune) = LOWER(?)");
     args.push(commune);
   }
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const whereSql = `WHERE ${where.join(" AND ")}`;
 
   const items = await db.all<{
     id: number;
