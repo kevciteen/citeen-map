@@ -1,6 +1,6 @@
 import { Topbar } from "@/components/layout/topbar";
 import { CoprosSyndicsTabs } from "@/components/crm/copros-syndics-tabs";
-import { db } from "@/lib/db/client";
+import { getCoproSyndicCounts } from "@/lib/services/global-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -9,17 +9,10 @@ export default async function CoprosPage({
 }: {
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const [coprosRow, syndicsRow, params] = await Promise.all([
-    db.get<{ c: number }>("SELECT COUNT(*) AS c FROM copros"),
-    db.get<{ c: number }>(
-      `SELECT COUNT(DISTINCT TRIM(syndic)) AS c
-       FROM copros
-       WHERE syndic IS NOT NULL AND LOWER(syndic) != 'non connu'`,
-    ),
+  const [{ totalCopros, totalSyndics }, params] = await Promise.all([
+    getCoproSyndicCounts(),
     searchParams,
   ]);
-  const totalCopros = coprosRow?.c ?? 0;
-  const totalSyndics = syndicsRow?.c ?? 0;
   const initialTab = params.tab === "syndics" ? "syndics" : "copros";
 
   return (

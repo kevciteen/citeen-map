@@ -1,16 +1,11 @@
 import { Topbar } from "@/components/layout/topbar";
 import { SyndicsBrowser } from "@/components/crm/syndics-browser";
-import { db } from "@/lib/db/client";
+import { getCoproSyndicCounts } from "@/lib/services/global-counts";
 
 export const dynamic = "force-dynamic";
 
 export default async function SyndicsPage() {
-  const row = await db.get<{ c: number }>(
-    `SELECT COUNT(DISTINCT TRIM(syndic)) AS c
-     FROM copros
-     WHERE syndic IS NOT NULL AND LOWER(syndic) != 'non connu'`,
-  );
-  const total = row?.c ?? 0;
+  const { totalSyndics: total } = await getCoproSyndicCounts();
 
   return (
     <div className="flex h-full flex-col">
