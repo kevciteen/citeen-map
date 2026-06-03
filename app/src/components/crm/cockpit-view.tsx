@@ -22,11 +22,19 @@ import {
 import { jsonFetcher } from "@/lib/fetcher";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DpeBadge } from "@/components/ui/dpe-badge";
+import dynamic from "next/dynamic";
 import { stageMeta, formatCurrency, PIPELINE_ORDER } from "@/lib/utils";
 import {
-  AnnuaireMap, DPE_COLORS, type AnnuaireMapPoint,
+  DPE_COLORS, type AnnuaireMapPoint,
 } from "@/components/annuaire/annuaire-map";
 import { AssignDropdown } from "@/components/crm/assign-dropdown";
+
+// MapLibre est lourd (~200KB) — chargement à la demande, pas au boot.
+// SSR off car maplibre-gl touche `window` à l'import.
+const AnnuaireMap = dynamic(
+  () => import("@/components/annuaire/annuaire-map").then(m => m.AnnuaireMap),
+  { ssr: false, loading: () => <Skeleton className="h-72 w-full" /> },
+);
 
 type Stage = "lead" | "to_contact" | "contacted" | "meeting" | "proposal" | "won" | "lost";
 

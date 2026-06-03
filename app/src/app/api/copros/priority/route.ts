@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { ensureAuth } from "@/lib/auth/guards";
 import { ensureEntityOverrides } from "@/lib/db/ensure-entity-overrides";
+import { ensurePerfIndexes } from "@/lib/db/ensure-perf-indexes";
 import { SCORE_SQL_FRAGMENT } from "@/lib/services/priority-score";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const guard = await ensureAuth();
   if (guard instanceof NextResponse) return guard;
-  await ensureEntityOverrides();
+  await Promise.all([ensureEntityOverrides(), ensurePerfIndexes()]);
 
   const sp = req.nextUrl.searchParams;
   const commune = sp.get("commune")?.trim();

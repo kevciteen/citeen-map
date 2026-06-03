@@ -156,8 +156,6 @@ export async function GET(req: NextRequest) {
   const ftsParams: InValue[] = useFts ? [ftsQuery] : [];
 
   const countSql = `SELECT COUNT(*) AS c ${fromSql} ${fullWhereSql}`;
-  const countRow = await db.get<{ c: number }>(countSql, [...ftsParams, ...params]);
-  const total = countRow?.c ?? 0;
 
   const SORT_MAP: Record<string, string> = {
     default: "c.commune, c.code_postal, c.adresse",
@@ -178,6 +176,9 @@ export async function GET(req: NextRequest) {
   };
   const orderBy = SORT_MAP[sort] ?? SORT_MAP.default;
 
+  // Avant : 2 subqueries corrélées (prospect_id, prospect_stage) évaluées par ligne
+  // = N+1 lookups. Maintenant : 1 LEFT JOIN sur agrégat MIN(id) groupé par copro_id,
+  // puis un JOIN simple sur le prospect résultant.
   const listSql = `
     SELECT c.id, c.numero_immatriculation, c.nom_copro, c.adresse, c.code_postal,
            c.commune, c.departement, c.syndic,
@@ -185,14 +186,26 @@ export async function GET(req: NextRequest) {
            c.lat, c.lon,
            e.classe_finale, e.classe_reelle, e.conso_moyenne, e.nb_dpe_individuels,
            e.quality_level,
-           (SELECT p.id FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_id,
-           (SELECT p.stage FROM prospects p WHERE p.copro_id = c.id LIMIT 1) AS prospect_stage
+           p_first.id AS prospect_id,
+           p_first.stage AS prospect_stage
     ${fromSql}
+    LEFT JOIN (
+      SELECT copro_id, MIN(id) AS first_id
+      FROM prospects WHERE copro_id IS NOT NULL
+      GROUP BY copro_id
+    ) p_agg ON p_agg.copro_id = c.id
+    LEFT JOIN prospects p_first ON p_first.id = p_agg.first_id
     ${fullWhereSql}
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
   `;
-  const items = await db.all(listSql, [...ftsParams, ...params, limit, offset]);
+
+  // Parallélise COUNT et items — gain ~50% sur cette page
+  const [countRow, items] = await Promise.all([
+    db.get<{ c: number }>(countSql, [...ftsParams, ...params]),
+    db.all(listSql, [...ftsParams, ...params, limit, offset]),
+  ]);
+  const total = countRow?.c ?? 0;
 
   return NextResponse.json({ total, limit, offset, items });
 }

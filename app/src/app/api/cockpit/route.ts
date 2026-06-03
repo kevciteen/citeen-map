@@ -14,6 +14,7 @@ import { db } from "@/lib/db/client";
 import { ensureAuth } from "@/lib/auth/guards";
 import { ensureEntityOverrides } from "@/lib/db/ensure-entity-overrides";
 import { ensureProspectExtras } from "@/lib/db/ensure-prospect-extras";
+import { ensurePerfIndexes } from "@/lib/db/ensure-perf-indexes";
 
 export const runtime = "nodejs";
 
@@ -29,7 +30,11 @@ type Stage =
 export async function GET(req: NextRequest) {
   const guard = await ensureAuth();
   if (guard instanceof NextResponse) return guard;
-  await Promise.all([ensureEntityOverrides(), ensureProspectExtras()]);
+  await Promise.all([
+    ensureEntityOverrides(),
+    ensureProspectExtras(),
+    ensurePerfIndexes(),
+  ]);
 
   // Filtre "Mes prospects" : si ?mine=1, on filtre toutes les requêtes
   // prospects pour ne garder que ceux assignés à l'utilisateur courant

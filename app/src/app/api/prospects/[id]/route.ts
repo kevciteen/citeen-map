@@ -39,19 +39,20 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const pid = Number(id);
   if (!Number.isFinite(pid)) return NextResponse.json({ error: "bad id" }, { status: 400 });
 
-  const prospect = await db.get(
-    `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
-            c.nb_lots, c.lat as copro_lat, c.lon as copro_lon,
-            e.classe_finale, e.conso_moyenne, e.nb_dpe_individuels
-     FROM prospects p
-     LEFT JOIN copros c ON c.id = p.copro_id
-     LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
-     WHERE p.id = ?`,
-    [pid],
-  );
-  if (!prospect) return NextResponse.json({ error: "not found" }, { status: 404 });
-
-  const [contacts, notes, tasks, activities] = await Promise.all([
+  // Parallélise les 5 requêtes en 1 seul round-trip (au lieu de 2 séquentiels).
+  // L'existence du prospect est vérifiée après — si null on retourne 404 même
+  // si les autres tables ont retourné des lignes orphelines (impossible vu les FK).
+  const [prospect, contacts, notes, tasks, activities] = await Promise.all([
+    db.get(
+      `SELECT p.*, c.nom_copro, c.adresse, c.code_postal, c.commune, c.syndic,
+              c.nb_lots, c.lat as copro_lat, c.lon as copro_lon,
+              e.classe_finale, e.conso_moyenne, e.nb_dpe_individuels
+       FROM prospects p
+       LEFT JOIN copros c ON c.id = p.copro_id
+       LEFT JOIN dpe_estimates e ON e.copro_id = p.copro_id
+       WHERE p.id = ?`,
+      [pid],
+    ),
     db.all("SELECT * FROM contacts WHERE prospect_id = ? ORDER BY id", [pid]),
     db.all(
       "SELECT * FROM notes WHERE prospect_id = ? ORDER BY created_at DESC",
@@ -63,6 +64,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       [pid],
     ),
   ]);
+  if (!prospect) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   return NextResponse.json({ prospect, contacts, notes, tasks, activities });
 }
