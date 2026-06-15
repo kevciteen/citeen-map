@@ -7,6 +7,7 @@ import { DpeBadge } from "@/components/ui/dpe-badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { MaisonsMap, type MaisonDpe } from "@/components/crm/maisons-map";
+import { AddressAutocomplete } from "@/components/crm/address-autocomplete";
 
 const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G"] as const;
 const ENERGIES = [
@@ -36,6 +37,7 @@ export function MaisonsMapView({
   const typeLabelPluralFr =
     typeBatiment === "appartement" ? "appartements" : "maisons";
 
+  const [addressQuery, setAddressQuery] = useState("");
   const [cp, setCp] = useState("");
   const [commune, setCommune] = useState("");
   const [dpeClasses, setDpeClasses] = useState<Set<string>>(new Set(["F", "G"]));
@@ -63,17 +65,19 @@ export function MaisonsMapView({
     setter(next);
   };
 
-  const search = async () => {
-    if (!cp.trim() && !commune.trim()) {
-      toast.error("Saisissez au moins un CP ou une commune");
+  const search = async (override?: { cp?: string; commune?: string }) => {
+    const cpVal = (override?.cp ?? cp).trim();
+    const communeVal = (override?.commune ?? commune).trim();
+    if (!cpVal && !communeVal) {
+      toast.error("Saisissez une adresse, un CP ou une commune");
       return;
     }
     setLoading(true);
     setItems([]);
     try {
       const sp = new URLSearchParams();
-      if (cp.trim()) sp.set("cp", cp.trim());
-      if (commune.trim()) sp.set("commune", commune.trim());
+      if (cpVal) sp.set("cp", cpVal);
+      if (communeVal) sp.set("commune", communeVal);
       if (dpeClasses.size > 0) sp.set("dpe", [...dpeClasses].join(","));
       if (gesClasses.size > 0) sp.set("ges", [...gesClasses].join(","));
       if (consoMin.trim()) sp.set("consoMin", consoMin.trim());
@@ -103,6 +107,20 @@ export function MaisonsMapView({
     <div className="relative h-full w-full">
       {/* Panneau de filtres flottant (calqué sur le tertiaire) */}
       <div className="absolute left-3 top-3 z-10 w-[360px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card/95 p-3 shadow-md backdrop-blur">
+        <div className="mb-2">
+          <AddressAutocomplete
+            value={addressQuery}
+            onChange={setAddressQuery}
+            onSelect={(s) => {
+              setAddressQuery(s.label);
+              if (s.postcode) setCp(s.postcode);
+              if (s.city) setCommune(s.city);
+              search({ cp: s.postcode, commune: s.city });
+            }}
+            placeholder="🔍 Tape une adresse (suggestions BAN)"
+            disabled={loading}
+          />
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <Input
             value={cp}
@@ -144,7 +162,7 @@ export function MaisonsMapView({
         </div>
 
         <div className="mt-2 flex items-center gap-2">
-          <Button size="sm" onClick={search} disabled={loading} className="h-8 flex-1 gap-1.5 text-xs">
+          <Button size="sm" onClick={() => search()} disabled={loading} className="h-8 flex-1 gap-1.5 text-xs">
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
             Rechercher
           </Button>
@@ -237,7 +255,7 @@ export function MaisonsMapView({
       </div>
 
       {/* Carte plein écran */}
-      <MaisonsMap items={items} typeBatiment={typeBatiment} />
+      <MaisonsMap items={items} typeBatiment={typeBatiment} showLegend={false} />
 
       {/* État vide */}
       {!searched && !loading ? (

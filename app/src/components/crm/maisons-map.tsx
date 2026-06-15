@@ -77,9 +77,11 @@ type BatimentType = "maison" | "appartement";
 export function MaisonsMap({
   items,
   typeBatiment = "maison",
+  showLegend = true,
 }: {
   items: MaisonDpe[];
   typeBatiment?: BatimentType;
+  showLegend?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -299,6 +301,7 @@ export function MaisonsMap({
       />
 
       {/* DPE color legend */}
+      {showLegend ? (
       <div className="absolute left-3 top-3 z-10 rounded-lg border border-border bg-card/95 p-2 shadow backdrop-blur">
         <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           Classe DPE
@@ -315,6 +318,7 @@ export function MaisonsMap({
           ))}
         </div>
       </div>
+      ) : null}
 
       {/* Hidden trigger to open the sheet imperatively when user clicks a marker */}
       {selected ? (
