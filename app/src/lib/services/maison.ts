@@ -539,6 +539,137 @@ async function resolveCommuneInsee(commune: string): Promise<{
   }
 }
 
+/**
+ * Applique les filtres post-fetch communs (DPE, GES, conso, surface, année,
+ * énergie, isolation, ancienneté) à une liste de records ADEME déjà restreinte
+ * au bon type de bâtiment. Partagé entre la recherche par zone et la recherche
+ * géographique (viewport).
+ */
+function applyRecordFilters(records: AdemeRecord[], f: MaisonsZoneFilters): AdemeRecord[] {
+  let out = records;
+  if (f.dpeClasses && f.dpeClasses.length > 0) {
+    const set = new Set(f.dpeClasses.map((c) => c.toUpperCase()));
+    out = out.filter((r) => set.has(String(r.etiquette_dpe ?? "NC").toUpperCase()));
+  }
+  if (f.gesClasses && f.gesClasses.length > 0) {
+    const set = new Set(f.gesClasses.map((c) => c.toUpperCase()));
+    out = out.filter((r) => set.has(String(r.etiquette_ges ?? "NC").toUpperCase()));
+  }
+  if (f.consoMin != null) {
+    out = out.filter((r) => {
+      const c = pickNumber(r, ["conso_5_usages_par_m2_ep"]);
+      return c != null && c >= f.consoMin!;
+    });
+  }
+  if (f.consoMax != null) {
+    out = out.filter((r) => {
+      const c = pickNumber(r, ["conso_5_usages_par_m2_ep"]);
+      return c != null && c <= f.consoMax!;
+    });
+  }
+  if (f.surfaceMin != null) {
+    out = out.filter((r) => {
+      const s = pickNumber(r, ["surface_habitable_logement"]);
+      return s != null && s >= f.surfaceMin!;
+    });
+  }
+  if (f.surfaceMax != null) {
+    out = out.filter((r) => {
+      const s = pickNumber(r, ["surface_habitable_logement"]);
+      return s != null && s <= f.surfaceMax!;
+    });
+  }
+  if (f.yearMin != null) {
+    out = out.filter((r) => {
+      const y = pickNumber(r, ["annee_construction"]);
+      return y != null && y >= f.yearMin!;
+    });
+  }
+  if (f.yearMax != null) {
+    out = out.filter((r) => {
+      const y = pickNumber(r, ["annee_construction"]);
+      return y != null && y <= f.yearMax!;
+    });
+  }
+  if (f.energie && f.energie.length > 0) {
+    const wanted = f.energie.map((e) => normalizeAscii(e));
+    out = out.filter((r) => {
+      const energie = normalizeAscii(
+        (r["type_energie_principale_chauffage"] as string) ??
+          (r["type_energie_n1"] as string) ??
+          "",
+      );
+      return wanted.some((w) => energie.includes(w));
+    });
+  }
+  if (f.isolationMursMauvaise) {
+    out = out.filter((r) => {
+      const q = String(r["qualite_isolation_murs"] ?? "").toLowerCase();
+      return q.includes("insuffisante") || q.includes("tres mauvaise") || q.includes("mauvaise") || q.includes("moyenne");
+    });
+  }
+  if (f.dpeAncienAnnees && f.dpeAncienAnnees > 0) {
+    const cutoff = Date.now() - f.dpeAncienAnnees * 365 * 24 * 3600 * 1000;
+    out = out.filter((r) => {
+      const t = Date.parse(String(r.date_etablissement_dpe ?? ""));
+      return Number.isFinite(t) && t < cutoff;
+    });
+  }
+  return out;
+}
+
+/** Dédup par numero_dpe en gardant l'enregistrement le plus récent. */
+function dedupRecordsByNumero(records: AdemeRecord[]): Map<string, AdemeRecord> {
+  const dedup = new Map<string, AdemeRecord>();
+  for (const r of records) {
+    const id = String(r.numero_dpe ?? "");
+    if (!id) continue;
+    const date =
+      Date.parse(String(r.date_derniere_modification_dpe ?? r.date_etablissement_dpe ?? "")) || 0;
+    const prev = dedup.get(id);
+    if (!prev) dedup.set(id, r);
+    else {
+      const pdate =
+        Date.parse(String(prev.date_derniere_modification_dpe ?? prev.date_etablissement_dpe ?? "")) || 0;
+      if (date >= pdate) dedup.set(id, r);
+    }
+  }
+  return dedup;
+}
+
+export type MaisonsAroundFilters = Omit<MaisonsZoneFilters, "cp" | "commune"> & {
+  lat: number;
+  lon: number;
+  radiusM: number; // rayon de recherche en mètres
+};
+
+/**
+ * Recherche géographique (viewport) : interroge ADEME par geo_distance autour
+ * d'un centre/rayon, puis applique les mêmes filtres que la recherche par zone.
+ * Permet à la carte maisons/appartements de réagir au déplacement/zoom comme
+ * le module tertiaire, plutôt que de charger un code postal entier.
+ */
+export async function searchMaisonsAround(
+  f: MaisonsAroundFilters,
+): Promise<{ total: number; items: MaisonDpe[] }> {
+  const typeBatiment: BatimentType = f.typeBatiment ?? "maison";
+  const raw = await fetchAdemeDpeAround({
+    lat: f.lat,
+    lon: f.lon,
+    r: Math.max(50, Math.round(f.radiusM)),
+    size: Math.min(f.size ?? 3000, 10000),
+  });
+  const typed = raw.filter((r) => isBatimentType(r, typeBatiment));
+  const filtered = applyRecordFilters(typed, f);
+  const dedup = dedupRecordsByNumero(filtered);
+  const items = [...dedup.values()]
+    .map(toMaisonDpe)
+    .filter((m) => m.lat != null && m.lon != null)
+    .sort((a, b) => (b.conso ?? 0) - (a.conso ?? 0))
+    .slice(0, Math.min(f.limit ?? 800, 1000));
+  return { total: dedup.size, items };
+}
+
 export async function searchMaisonsByZone(
   f: MaisonsZoneFilters,
 ): Promise<{ total: number; items: MaisonDpe[] }> {
@@ -574,99 +705,9 @@ export async function searchMaisonsByZone(
   }
   const json = (await res.json()) as { total?: number; results?: AdemeRecord[] };
 
-  let records = (json.results ?? []).filter((r) => isBatimentType(r, typeBatiment));
-
-  // Filtres post‑fetch
-  if (f.dpeClasses && f.dpeClasses.length > 0) {
-    const set = new Set(f.dpeClasses.map((c) => c.toUpperCase()));
-    records = records.filter((r) =>
-      set.has(String(r.etiquette_dpe ?? "NC").toUpperCase()),
-    );
-  }
-  if (f.gesClasses && f.gesClasses.length > 0) {
-    const set = new Set(f.gesClasses.map((c) => c.toUpperCase()));
-    records = records.filter((r) =>
-      set.has(String(r.etiquette_ges ?? "NC").toUpperCase()),
-    );
-  }
-  if (f.consoMin != null) {
-    records = records.filter((r) => {
-      const c = pickNumber(r, ["conso_5_usages_par_m2_ep"]);
-      return c != null && c >= f.consoMin!;
-    });
-  }
-  if (f.consoMax != null) {
-    records = records.filter((r) => {
-      const c = pickNumber(r, ["conso_5_usages_par_m2_ep"]);
-      return c != null && c <= f.consoMax!;
-    });
-  }
-  if (f.surfaceMin != null) {
-    records = records.filter((r) => {
-      const s = pickNumber(r, ["surface_habitable_logement"]);
-      return s != null && s >= f.surfaceMin!;
-    });
-  }
-  if (f.surfaceMax != null) {
-    records = records.filter((r) => {
-      const s = pickNumber(r, ["surface_habitable_logement"]);
-      return s != null && s <= f.surfaceMax!;
-    });
-  }
-  if (f.yearMin != null) {
-    records = records.filter((r) => {
-      const y = pickNumber(r, ["annee_construction"]);
-      return y != null && y >= f.yearMin!;
-    });
-  }
-  if (f.yearMax != null) {
-    records = records.filter((r) => {
-      const y = pickNumber(r, ["annee_construction"]);
-      return y != null && y <= f.yearMax!;
-    });
-  }
-  if (f.energie && f.energie.length > 0) {
-    const wanted = f.energie.map((e) => normalizeAscii(e));
-    records = records.filter((r) => {
-      const energie = normalizeAscii(
-        (r["type_energie_principale_chauffage"] as string) ??
-          (r["type_energie_n1"] as string) ??
-          "",
-      );
-      return wanted.some((w) => energie.includes(w));
-    });
-  }
-  if (f.isolationMursMauvaise) {
-    records = records.filter((r) => {
-      const q = String(r["qualite_isolation_murs"] ?? "").toLowerCase();
-      return q.includes("insuffisante") || q.includes("tres mauvaise") || q.includes("mauvaise") || q.includes("moyenne");
-    });
-  }
-  if (f.dpeAncienAnnees && f.dpeAncienAnnees > 0) {
-    const cutoff = Date.now() - f.dpeAncienAnnees * 365 * 24 * 3600 * 1000;
-    records = records.filter((r) => {
-      const t = Date.parse(String(r.date_etablissement_dpe ?? ""));
-      return Number.isFinite(t) && t < cutoff;
-    });
-  }
-
-  // Dédup par numero_dpe en gardant le plus récent
-  const dedup = new Map<string, AdemeRecord>();
-  for (const r of records) {
-    const id = String(r.numero_dpe ?? "");
-    if (!id) continue;
-    const date =
-      Date.parse(String(r.date_derniere_modification_dpe ?? r.date_etablissement_dpe ?? "")) ||
-      0;
-    const prev = dedup.get(id);
-    if (!prev) dedup.set(id, r);
-    else {
-      const pdate =
-        Date.parse(String(prev.date_derniere_modification_dpe ?? prev.date_etablissement_dpe ?? "")) ||
-        0;
-      if (date >= pdate) dedup.set(id, r);
-    }
-  }
+  const typed = (json.results ?? []).filter((r) => isBatimentType(r, typeBatiment));
+  const records = applyRecordFilters(typed, f);
+  const dedup = dedupRecordsByNumero(records);
 
   const items = [...dedup.values()]
     .sort((a, b) => {

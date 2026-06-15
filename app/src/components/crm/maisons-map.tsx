@@ -74,20 +74,46 @@ const DPE_COLORS: Record<string, string> = {
 
 type BatimentType = "maison" | "appartement";
 
+export type MaisonsMapBounds = {
+  centerLat: number;
+  centerLon: number;
+  radiusM: number;
+  zoom: number;
+};
+
+function haversineM(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const R = 6371000;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLon = ((bLon - aLon) * Math.PI) / 180;
+  const la1 = (aLat * Math.PI) / 180;
+  const la2 = (bLat * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 export function MaisonsMap({
   items,
   typeBatiment = "maison",
   showLegend = true,
+  autoFit = true,
+  onBoundsChange,
+  flyTo,
 }: {
   items: MaisonDpe[];
   typeBatiment?: BatimentType;
   showLegend?: boolean;
+  autoFit?: boolean;
+  onBoundsChange?: (b: MaisonsMapBounds) => void;
+  flyTo?: { lat: number; lon: number; zoom?: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const [ready, setReady] = useState(false);
   const [selected, setSelected] = useState<MaisonDpe | null>(null);
   const [sheetTrigger, setSheetTrigger] = useState(0);
+  const onBoundsChangeRef = useRef(onBoundsChange);
+  onBoundsChangeRef.current = onBoundsChange;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -219,6 +245,20 @@ export function MaisonsMap({
         m.on("mouseenter", "clusters", () => (m.getCanvas().style.cursor = "pointer"));
         m.on("mouseleave", "clusters", () => (m.getCanvas().style.cursor = ""));
 
+        // Émet le centre + rayon du viewport (pour la recherche géo type
+        // tertiaire). Le rayon = distance centre→coin (couvre tout l'écran).
+        const emitBounds = () => {
+          const cb = onBoundsChangeRef.current;
+          if (!cb) return;
+          const c = m.getCenter();
+          const b = m.getBounds();
+          const ne = b.getNorthEast();
+          const radiusM = haversineM(c.lat, c.lng, ne.lat, ne.lng);
+          cb({ centerLat: c.lat, centerLon: c.lng, radiusM, zoom: m.getZoom() });
+        };
+        m.on("moveend", emitBounds);
+        emitBounds();
+
         setReady(true);
       });
     };
@@ -266,13 +306,21 @@ export function MaisonsMap({
       }));
     src.setData({ type: "FeatureCollection", features });
 
-    // Auto-fit on first load
-    if (features.length > 0) {
+    // Auto-fit on load — désactivé en mode viewport (la caméra est pilotée
+    // par flyTo / le déplacement utilisateur).
+    if (autoFit && features.length > 0) {
       const bounds = new maplibregl.LngLatBounds();
       for (const f of features) bounds.extend(f.geometry.coordinates as [number, number]);
       map.fitBounds(bounds, { padding: 50, maxZoom: 16, duration: 600 });
     }
-  }, [items, ready]);
+  }, [items, ready, autoFit]);
+
+  // Vol vers une adresse (mode viewport)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !flyTo) return;
+    map.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: flyTo.zoom ?? 16, duration: 800 });
+  }, [flyTo, ready]);
 
   return (
     <div
