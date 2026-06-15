@@ -4,7 +4,7 @@ import maplibregl, { type Map, type MapGeoJSONFeature } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MaisonDetailSheet } from "@/components/crm/maison-detail-sheet";
 
-type MaisonDpe = {
+export type MaisonDpe = {
   numero_dpe: string;
   classe: string;
   ges: string;

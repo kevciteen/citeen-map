@@ -99,7 +99,7 @@ const SECTORS = ["Bureaux", "Commerces", "Hotellerie / Restauration", "Sante", "
 const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G"];
 
 export function TertiaireModule() {
-  const [tab, setTab] = useState<Tab>("search");
+  const [tab, setTab] = useState<Tab>("map");
   // Simulateur CEE overlay
   const [ceeOverlay, setCeeOverlay] = useState<{
     sector?: string | null;
@@ -114,11 +114,11 @@ export function TertiaireModule() {
       {/* Tabs header */}
       <div className="border-b border-border bg-card/40 backdrop-blur">
         <div className="flex gap-1 px-4">
-          <TabButton active={tab === "search"} onClick={() => setTab("search")} icon={<Search className="h-3.5 w-3.5" />}>
-            Recherche par adresse
-          </TabButton>
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon className="h-3.5 w-3.5" />}>
             Carte IDF
+          </TabButton>
+          <TabButton active={tab === "search"} onClick={() => setTab("search")} icon={<Search className="h-3.5 w-3.5" />}>
+            Recherche par adresse
           </TabButton>
         </div>
       </div>

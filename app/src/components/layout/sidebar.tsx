@@ -10,7 +10,6 @@ import {
   Briefcase,
   Home,
   Settings,
-  FileDown,
   PlusCircle,
   Shield,
   LogOut,
@@ -35,7 +34,6 @@ const items = [
   { href: "/appartements", label: "Appartements", icon: Building },
   { href: "/tertiaire", label: "Tertiaire", icon: Briefcase },
   { href: "/dpe", label: "DPE par adresse", icon: ScanSearch },
-  { href: "/exports", label: "Exports data", icon: FileDown },
   // Hidden : /annuaire, /campagnes (actions commerciales — à venir)
 ];
 
