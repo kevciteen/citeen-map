@@ -99,6 +99,7 @@ export function MaisonsMap({
   autoFit = true,
   onBoundsChange,
   flyTo,
+  onSelectMaison,
 }: {
   items: MaisonDpe[];
   typeBatiment?: BatimentType;
@@ -106,6 +107,9 @@ export function MaisonsMap({
   autoFit?: boolean;
   onBoundsChange?: (b: MaisonsMapBounds) => void;
   flyTo?: { lat: number; lon: number; zoom?: number } | null;
+  /** Si fourni, le clic sur un marqueur remonte la sélection au parent (qui
+   *  affiche un panneau latéral) au lieu d'ouvrir la popup interne. */
+  onSelectMaison?: (m: MaisonDpe) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -114,6 +118,8 @@ export function MaisonsMap({
   const [sheetTrigger, setSheetTrigger] = useState(0);
   const onBoundsChangeRef = useRef(onBoundsChange);
   onBoundsChangeRef.current = onBoundsChange;
+  const onSelectMaisonRef = useRef(onSelectMaison);
+  onSelectMaisonRef.current = onSelectMaison;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -223,8 +229,12 @@ export function MaisonsMap({
               (x) => x.numero_dpe === numero,
             );
             if (found) {
-              setSelected(found);
-              setSheetTrigger((n) => n + 1);
+              if (onSelectMaisonRef.current) {
+                onSelectMaisonRef.current(found);
+              } else {
+                setSelected(found);
+                setSheetTrigger((n) => n + 1);
+              }
             }
           }
         });
@@ -368,8 +378,10 @@ export function MaisonsMap({
       </div>
       ) : null}
 
-      {/* Hidden trigger to open the sheet imperatively when user clicks a marker */}
-      {selected ? (
+      {/* Popup interne — uniquement quand le parent ne gère pas la sélection
+          (onSelectMaison non fourni). Sur les cartes on remonte la sélection
+          pour afficher un panneau latéral docké (style tertiaire). */}
+      {!onSelectMaison && selected ? (
         <MaisonDetailSheet
           key={`${selected.numero_dpe}-${sheetTrigger}`}
           maison={selected}
@@ -378,7 +390,7 @@ export function MaisonsMap({
         />
       ) : null}
       {/* Auto-click the hidden trigger when selected changes */}
-      <OpenSheetEffect dep={sheetTrigger} />
+      {!onSelectMaison ? <OpenSheetEffect dep={sheetTrigger} /> : null}
     </div>
   );
 }

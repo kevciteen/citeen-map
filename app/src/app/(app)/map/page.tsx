@@ -11,7 +11,7 @@ import {
 import { AddressSearch } from "@/components/map/address-search";
 import { CoproPanel } from "@/components/map/copro-panel";
 import { TertiairePanel } from "@/components/map/tertiaire-panel";
-import { MaisonDetailSheet } from "@/components/crm/maison-detail-sheet";
+import { MaisonDetailBody } from "@/components/crm/maison-detail-sheet";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -84,7 +84,6 @@ export default function MapPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedTertiaireId, setSelectedTertiaireId] = useState<number | null>(null);
   const [selectedMaison, setSelectedMaison] = useState<MaisonFull | null>(null);
-  const [maisonSheetKey, setMaisonSheetKey] = useState(0);
   const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
   const fetchSeq = useRef(0);
   const maisonsCache = useRef<Map<string, MaisonFull>>(new Map());
@@ -244,8 +243,9 @@ export default function MapPage() {
   const handleSelectMaison = useCallback((numeroDpe: string) => {
     const m = maisonsCache.current.get(numeroDpe);
     if (m) {
+      setSelectedId(null);
+      setSelectedTertiaireId(null);
       setSelectedMaison(m);
-      setMaisonSheetKey((n) => n + 1);
     }
   }, []);
 
@@ -269,9 +269,9 @@ export default function MapPage() {
           flyTo={flyTo}
           selectedId={selectedId}
           onBoundsChange={setBounds}
-          onSelectCopro={(id) => { setSelectedTertiaireId(null); setSelectedId(id); }}
+          onSelectCopro={(id) => { setSelectedTertiaireId(null); setSelectedMaison(null); setSelectedId(id); }}
           onSelectMaison={handleSelectMaison}
-          onSelectTertiaire={(id) => { setSelectedId(null); setSelectedTertiaireId(id); }}
+          onSelectTertiaire={(id) => { setSelectedId(null); setSelectedMaison(null); setSelectedTertiaireId(id); }}
         />
 
         <FiltersBar
@@ -337,20 +337,17 @@ export default function MapPage() {
           </div>
         ) : null}
 
-        {/* Sheet maison déclenchée par clic sur un marker maison */}
+        {/* Panneau latéral maison (style tertiaire — pas de popup) */}
         {selectedMaison ? (
-          <MaisonDetailSheet
-            key={`${selectedMaison.numero_dpe}-${maisonSheetKey}`}
-            maison={selectedMaison}
-            trigger={
-              <button
-                id="__map_maison_sheet_trigger__"
-                style={{ display: "none" }}
-              />
-            }
-          />
+          <div className="absolute right-4 top-4 z-20 h-[calc(100%-2rem)] w-[420px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
+            <MaisonDetailBody
+              key={selectedMaison.numero_dpe}
+              maison={selectedMaison}
+              typeBatiment={(selectedMaison.type_batiment === "appartement" ? "appartement" : "maison")}
+              onClose={() => setSelectedMaison(null)}
+            />
+          </div>
         ) : null}
-        <MaisonSheetOpener depKey={maisonSheetKey} />
 
         {/* Bandeau de compteur + état recherche */}
         <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
@@ -372,16 +369,4 @@ export default function MapPage() {
       </div>
     </div>
   );
-}
-
-// Petit effet pour cliquer le trigger caché du sheet quand selectedMaison change
-function MaisonSheetOpener({ depKey }: { depKey: number }) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  if (typeof window !== "undefined" && depKey > 0) {
-    queueMicrotask(() => {
-      const btn = document.getElementById("__map_maison_sheet_trigger__");
-      if (btn) (btn as HTMLButtonElement).click();
-    });
-  }
-  return null;
 }

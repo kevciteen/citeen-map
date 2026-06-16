@@ -9,7 +9,7 @@ import { DpeBadge } from "@/components/ui/dpe-badge";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { MaisonDetailSheet } from "@/components/crm/maison-detail-sheet";
+import { MaisonDetailSheet, MaisonDetailBody } from "@/components/crm/maison-detail-sheet";
 import { MaisonsMap } from "@/components/crm/maisons-map";
 
 type MaisonDpe = {
@@ -119,6 +119,7 @@ export function MaisonsZoneSearch({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAdding, setBulkAdding] = useState(false);
   const [view, setView] = useState<"list" | "map">("list");
+  const [mapSelected, setMapSelected] = useState<MaisonDpe | null>(null);
 
   const toggleClass = (c: string) => {
     const next = new Set(dpeClasses);
@@ -431,7 +432,25 @@ export function MaisonsZoneSearch({
             </div>
           </div>
         ) : (
-          <MaisonsMap items={items} typeBatiment={typeBatiment} />
+          <div className="flex h-full w-full">
+            <div className="relative h-full flex-1">
+              <MaisonsMap
+                items={items}
+                typeBatiment={typeBatiment}
+                onSelectMaison={setMapSelected}
+              />
+            </div>
+            {mapSelected ? (
+              <div className="h-full w-[420px] max-w-[calc(100vw-2rem)] shrink-0 border-l border-border">
+                <MaisonDetailBody
+                  key={mapSelected.numero_dpe}
+                  maison={mapSelected}
+                  typeBatiment={typeBatiment}
+                  onClose={() => setMapSelected(null)}
+                />
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
     </div>

@@ -7,6 +7,7 @@ import { DpeBadge } from "@/components/ui/dpe-badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { MaisonsMap, type MaisonDpe, type MaisonsMapBounds } from "@/components/crm/maisons-map";
+import { MaisonDetailBody } from "@/components/crm/maison-detail-sheet";
 import { AddressAutocomplete } from "@/components/crm/address-autocomplete";
 
 const DPE_CLASSES = ["A", "B", "C", "D", "E", "F", "G"] as const;
@@ -62,6 +63,7 @@ export function MaisonsMapView({
   const [searched, setSearched] = useState(false);
   const [zoom, setZoom] = useState(11);
   const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
+  const [selected, setSelected] = useState<MaisonDpe | null>(null);
 
   const boundsRef = useRef<MaisonsMapBounds | null>(null);
   const onBoundsChange = useCallback((b: MaisonsMapBounds) => {
@@ -125,7 +127,8 @@ export function MaisonsMapView({
   };
 
   return (
-    <div className="relative h-full w-full">
+    <div className="flex h-full w-full">
+      <div className="relative h-full flex-1">
       {/* Panneau de filtres flottant (calqué sur le tertiaire) */}
       <div className="absolute left-3 top-3 z-10 w-[360px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card/95 p-3 shadow-md backdrop-blur">
         <div className="mb-2">
@@ -272,12 +275,26 @@ export function MaisonsMapView({
         autoFit={false}
         onBoundsChange={onBoundsChange}
         flyTo={flyTo}
+        onSelectMaison={setSelected}
       />
 
       {/* État vide */}
       {!searched && !loading ? (
         <div className="pointer-events-none absolute left-1/2 top-24 z-10 -translate-x-1/2 rounded-lg border border-border bg-card/95 px-4 py-2 text-xs text-muted-foreground shadow-md">
           Tape une adresse ou zoome sur une zone, puis lance la recherche.
+        </div>
+      ) : null}
+      </div>
+
+      {/* Panneau latéral docké (style tertiaire — rétrécit la carte) */}
+      {selected ? (
+        <div className="h-full w-[420px] max-w-[calc(100vw-2rem)] shrink-0 border-l border-border">
+          <MaisonDetailBody
+            key={selected.numero_dpe}
+            maison={selected}
+            typeBatiment={typeBatiment}
+            onClose={() => setSelected(null)}
+          />
         </div>
       ) : null}
     </div>

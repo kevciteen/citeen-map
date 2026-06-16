@@ -154,19 +154,62 @@ export function MaisonDetailSheet({
   onAdded?: () => void;
   typeBatiment?: BatimentType;
 }) {
-  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
   const typeLabel = typeBatiment === "appartement" ? "Appartement" : "Maison";
   const [open, setOpen] = useState(false);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-[88vh] max-h-[92vh] w-[820px] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-card shadow-2xl">
+          <Dialog.Title className="sr-only">
+            Fiche {typeLabel.toLowerCase()} détaillée
+          </Dialog.Title>
+          <Dialog.Description className="sr-only">
+            Détails du DPE de {typeBatiment === "appartement" ? "l'appartement" : "la maison"} à l'adresse {maison.address.label}
+          </Dialog.Description>
+          {open ? (
+            <MaisonDetailBody
+              maison={maison}
+              typeBatiment={typeBatiment}
+              onClose={() => setOpen(false)}
+              onAdded={onAdded}
+            />
+          ) : null}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/**
+ * Contenu de la fiche logement, agnostique du conteneur : utilisé soit dans
+ * une popup centrée (depuis les listes), soit dans un panneau latéral docké
+ * sur les cartes (style tertiaire — la carte se rétrécit, pas de popup).
+ */
+export function MaisonDetailBody({
+  maison,
+  onClose,
+  onAdded,
+  typeBatiment = "maison",
+}: {
+  maison: MaisonDpe;
+  onClose: () => void;
+  onAdded?: () => void;
+  typeBatiment?: BatimentType;
+}) {
+  const apiSegment = typeBatiment === "appartement" ? "appartements" : "maisons";
+  const typeLabel = typeBatiment === "appartement" ? "Appartement" : "Maison";
   const [adding, setAdding] = useState(false);
   const [dvf, setDvf] = useState<DvfResponse | null>(null);
   const [dvfLoading, setDvfLoading] = useState(false);
   const expired = isExpired(maison.date_fin_validite);
 
   useEffect(() => {
-    if (!open) return;
-    if (dvf) return; // déjà chargé
     if (maison.lat == null || maison.lon == null) return;
     let aborted = false;
+    setDvf(null);
     setDvfLoading(true);
     const params = new URLSearchParams();
     params.set("lat", String(maison.lat));
@@ -190,7 +233,7 @@ export function MaisonDetailSheet({
     return () => {
       aborted = true;
     };
-  }, [open, maison.lat, maison.lon, maison.address.housenumber, maison.address.street, dvf, apiSegment, typeBatiment]);
+  }, [maison.numero_dpe, maison.lat, maison.lon, maison.address.housenumber, maison.address.street, apiSegment, typeBatiment]);
 
   const lastSaleMonths = monthsSince(dvf?.stats.last_sale_date ?? null);
   const isRecentSale = lastSaleMonths != null && lastSaleMonths <= 24;
@@ -222,28 +265,18 @@ export function MaisonDetailSheet({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[820px] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl bg-card shadow-2xl">
-          <Dialog.Title className="sr-only">
-            Fiche {typeLabel.toLowerCase()} détaillée
-          </Dialog.Title>
-          <Dialog.Description className="sr-only">
-            Détails du DPE de {typeBatiment === "appartement" ? "l'appartement" : "la maison"} à l'adresse {maison.address.label}
-          </Dialog.Description>
-
+    <div className="flex h-full flex-col overflow-hidden bg-card">
           {/* HEADER coloré DPE */}
           <div
-            className="relative p-5 text-white"
+            className="relative shrink-0 p-5 text-white"
             style={{ background: DPE_GRADIENT[maison.classe] ?? DPE_GRADIENT.NC }}
           >
-            <Dialog.Close asChild>
-              <button className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30">
-                <X className="h-4 w-4" />
-              </button>
-            </Dialog.Close>
+            <button
+              onClick={onClose}
+              className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+            >
+              <X className="h-4 w-4" />
+            </button>
             <div className="flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
                 {typeBatiment === "appartement" ? (
@@ -291,7 +324,7 @@ export function MaisonDetailSheet({
           </div>
 
           {/* SCROLLABLE CONTENT */}
-          <div className="max-h-[calc(92vh-180px)] overflow-y-auto p-5">
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Kpi icon={<Zap className="h-3.5 w-3.5" />} label="Conso" value={maison.conso ? `${maison.conso}` : "—"} unit="kWhep/m²/an" />
               <Kpi icon={<DpeBadge classe={maison.ges} size="sm" />} label="GES" value={maison.ges} unit={maison.emission_ges ? `${maison.emission_ges} kgCO₂/m²` : ""} />
@@ -507,7 +540,7 @@ export function MaisonDetailSheet({
           </div>
 
           {/* FOOTER ACTIONS */}
-          <div className="flex flex-wrap items-center gap-2 border-t border-border bg-secondary/40 p-3">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-secondary/40 p-3">
             <Button onClick={addToPipeline} disabled={adding}>
               {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               Ajouter au pipeline
@@ -541,9 +574,7 @@ export function MaisonDetailSheet({
               </>
             ) : null}
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    </div>
   );
 }
 
