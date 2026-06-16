@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ExternalContactLinks } from "@/components/address/external-contact-links";
 import Link from "next/link";
 import { Loader2, MapPin, Home, Building, Calendar, Ruler, Zap, ExternalLink, Plus, AlertCircle, Eye, Banknote, TrendingUp } from "lucide-react";
@@ -127,10 +128,27 @@ export function MaisonsAddressSearch({
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [loadingSuggest, setLoadingSuggest] = useState(false);
-  const [result, setResult] = useState<LookupResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [lookupQuery, setLookupQuery] = useState<string>("");
   const [adding, setAdding] = useState<number | null>(null);
   const tid = useRef<number | null>(null);
+
+  // Lookup adresse caché par TanStack Query : rechercher deux fois la même
+  // adresse (ou y revenir) réaffiche instantanément.
+  const { data: result = null, isFetching: loading } = useQuery({
+    queryKey: [apiSegment, "lookup", lookupQuery],
+    queryFn: async () => {
+      const r = await fetch(`/api/${apiSegment}/lookup?q=${encodeURIComponent(lookupQuery)}`);
+      const j = await r.json();
+      if (!r.ok) {
+        toast.error(j?.error || "Erreur");
+        throw new Error(j?.error || "Erreur");
+      }
+      return j as LookupResult;
+    },
+    enabled: lookupQuery.trim().length >= 3,
+    staleTime: 5 * 60 * 1000,
+    retry: 0,
+  });
 
   useEffect(() => {
     if (tid.current) window.clearTimeout(tid.current);
@@ -151,18 +169,9 @@ export function MaisonsAddressSearch({
     }, 220);
   }, [query]);
 
-  const runLookup = async (q: string) => {
-    setLoading(true);
-    setResult(null);
+  const runLookup = (q: string) => {
     setSuggestOpen(false);
-    try {
-      const r = await fetch(`/api/${apiSegment}/lookup?q=${encodeURIComponent(q)}`);
-      const j = await r.json();
-      if (r.ok) setResult(j);
-      else toast.error(j?.error || "Erreur");
-    } finally {
-      setLoading(false);
-    }
+    setLookupQuery(q);
   };
 
   const addToPipeline = async (m: MaisonDpe, idx: number) => {

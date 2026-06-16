@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Loader2, Search, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,13 +58,13 @@ export function MaisonsMapView({
   const [dpeAncien, setDpeAncien] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const [items, setItems] = useState<MaisonDpe[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
   const [zoom, setZoom] = useState(11);
   const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
   const [selected, setSelected] = useState<MaisonDpe | null>(null);
+  // Paramètres géo de la dernière recherche demandée. La requête est cachée
+  // par TanStack Query : relancer une recherche identique (même zone + mêmes
+  // filtres) ou changer d'onglet et revenir réaffiche instantanément.
+  const [queryArgs, setQueryArgs] = useState<{ lat: number; lon: number; r: number } | null>(null);
 
   const boundsRef = useRef<MaisonsMapBounds | null>(null);
   const onBoundsChange = useCallback((b: MaisonsMapBounds) => {
@@ -78,43 +79,63 @@ export function MaisonsMapView({
     setter(next);
   };
 
-  const fetchAround = useCallback(
-    async (lat: number, lon: number, radiusM: number) => {
-      setLoading(true);
-      setItems([]);
-      try {
-        const sp = new URLSearchParams();
-        sp.set("lat", String(lat));
-        sp.set("lon", String(lon));
-        sp.set("r", String(Math.round(Math.min(radiusM, MAX_RADIUS_M))));
-        if (dpeClasses.size > 0) sp.set("dpe", [...dpeClasses].join(","));
-        if (gesClasses.size > 0) sp.set("ges", [...gesClasses].join(","));
-        if (consoMin.trim()) sp.set("consoMin", consoMin.trim());
-        if (consoMax.trim()) sp.set("consoMax", consoMax.trim());
-        if (surfaceMin.trim()) sp.set("surfaceMin", surfaceMin.trim());
-        if (surfaceMax.trim()) sp.set("surfaceMax", surfaceMax.trim());
-        if (yearMin.trim()) sp.set("yearMin", yearMin.trim());
-        if (yearMax.trim()) sp.set("yearMax", yearMax.trim());
-        if (energies.size > 0) sp.set("energie", [...energies].join(","));
-        if (isolationMurs) sp.set("isolationMursMauvaise", "1");
-        if (dpeAncien.trim()) sp.set("dpeAncienAnnees", dpeAncien.trim());
-        sp.set("limit", "800");
-
-        const r = await fetch(`/api/${apiSegment}/around?${sp}`);
-        const j = await r.json();
-        if (r.ok) {
-          setItems(j.items);
-          setTotal(j.total);
-          setSearched(true);
-        } else toast.error(j?.error || "Erreur");
-      } catch (err) {
-        toast.error((err as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [apiSegment, dpeClasses, gesClasses, consoMin, consoMax, surfaceMin, surfaceMax, yearMin, yearMax, energies, isolationMurs, dpeAncien],
+  // Filtres sérialisés (ordre stable) → font partie de la clé de cache.
+  const filterKey = useMemo(
+    () => ({
+      dpe: [...dpeClasses].sort(),
+      ges: [...gesClasses].sort(),
+      consoMin: consoMin.trim(),
+      consoMax: consoMax.trim(),
+      surfaceMin: surfaceMin.trim(),
+      surfaceMax: surfaceMax.trim(),
+      yearMin: yearMin.trim(),
+      yearMax: yearMax.trim(),
+      energie: [...energies].sort(),
+      isolationMurs,
+      dpeAncien: dpeAncien.trim(),
+    }),
+    [dpeClasses, gesClasses, consoMin, consoMax, surfaceMin, surfaceMax, yearMin, yearMax, energies, isolationMurs, dpeAncien],
   );
+
+  const { data, isFetching } = useQuery({
+    queryKey: [apiSegment, "around", queryArgs, filterKey],
+    queryFn: async () => {
+      const a = queryArgs!;
+      const sp = new URLSearchParams();
+      sp.set("lat", String(a.lat));
+      sp.set("lon", String(a.lon));
+      sp.set("r", String(Math.round(Math.min(a.r, MAX_RADIUS_M))));
+      if (filterKey.dpe.length) sp.set("dpe", filterKey.dpe.join(","));
+      if (filterKey.ges.length) sp.set("ges", filterKey.ges.join(","));
+      if (filterKey.consoMin) sp.set("consoMin", filterKey.consoMin);
+      if (filterKey.consoMax) sp.set("consoMax", filterKey.consoMax);
+      if (filterKey.surfaceMin) sp.set("surfaceMin", filterKey.surfaceMin);
+      if (filterKey.surfaceMax) sp.set("surfaceMax", filterKey.surfaceMax);
+      if (filterKey.yearMin) sp.set("yearMin", filterKey.yearMin);
+      if (filterKey.yearMax) sp.set("yearMax", filterKey.yearMax);
+      if (filterKey.energie.length) sp.set("energie", filterKey.energie.join(","));
+      if (filterKey.isolationMurs) sp.set("isolationMursMauvaise", "1");
+      if (filterKey.dpeAncien) sp.set("dpeAncienAnnees", filterKey.dpeAncien);
+      sp.set("limit", "800");
+
+      const r = await fetch(`/api/${apiSegment}/around?${sp}`);
+      const j = await r.json();
+      if (!r.ok) {
+        toast.error(j?.error || "Erreur");
+        throw new Error(j?.error || "Erreur");
+      }
+      return j as { items: MaisonDpe[]; total: number };
+    },
+    enabled: queryArgs != null,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    retry: 0,
+  });
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const loading = isFetching;
+  const searched = queryArgs != null;
 
   const searchArea = () => {
     const b = boundsRef.current;
@@ -123,7 +144,7 @@ export function MaisonsMapView({
       toast.error("Zoome davantage pour rechercher dans cette zone");
       return;
     }
-    fetchAround(b.centerLat, b.centerLon, b.radiusM);
+    setQueryArgs({ lat: b.centerLat, lon: b.centerLon, r: b.radiusM });
   };
 
   return (
@@ -138,7 +159,7 @@ export function MaisonsMapView({
             onSelect={(s) => {
               setAddressQuery(s.label);
               setFlyTo({ lat: s.lat, lon: s.lon, zoom: 16 });
-              fetchAround(s.lat, s.lon, ADDRESS_RADIUS_M);
+              setQueryArgs({ lat: s.lat, lon: s.lon, r: ADDRESS_RADIUS_M });
             }}
             placeholder="🔍 Tape une adresse (suggestions BAN)"
             disabled={loading}

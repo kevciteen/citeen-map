@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   Search,
   Map as MapIcon,
@@ -695,10 +696,6 @@ type Stats = {
 };
 
 function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | null; postalCode?: string | null; surface?: number | null; year?: number | null; label?: string }) => void }) {
-  const [points, setPoints] = useState<TertiairePoint[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filterSecteur, setFilterSecteur] = useState<string>("");
   const [filterDpe, setFilterDpe] = useState<string>("");
@@ -714,57 +711,69 @@ function MapView({ onSimulerCee }: { onSimulerCee: (ctx: { sector?: string | nul
   const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
   // Pré-initialisé pour que le 1er fetch fonctionne même si MapLibre tarde
   const boundsRef = useRef<MapBounds>(DEFAULT_BBOX);
-  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Snapshot bbox + filtres au clic « Rechercher » → clé de cache TanStack
+  // Query : re-rechercher la même zone/filtre réaffiche instantanément.
+  const [submitted, setSubmitted] = useState<{
+    bbox: { minLon: number; minLat: number; maxLon: number; maxLat: number } | null;
+    secteur: string; dpe: string; cp: string; commune: string;
+    surfaceMin: string; surfaceMax: string; yearMin: string; yearMax: string; proprio: string;
+  } | null>(null);
 
-  // Diagnostic au mount : compte global en DB pour comprendre si la prod
-  // voit bien les bâtiments importés.
-  useEffect(() => {
-    fetch("/api/tertiaire/stats")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setStats(j))
-      .catch(() => {});
-  }, []);
+  // Stats DB (COUNT mémoïsés côté serveur) — cachées aussi 5 min côté client.
+  const { data: stats = null } = useQuery<Stats>({
+    queryKey: ["tertiaire-stats"],
+    queryFn: async () => {
+      const r = await fetch("/api/tertiaire/stats");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<Stats>;
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: 0,
+  });
 
-  const fetchPoints = useCallback(async () => {
-    const b = boundsRef.current;
-    // Si filtres CP/commune actifs → on ignore le bbox (recherche globale)
-    const hasZoneFilter = Boolean(filterCp || filterCommune || filterProprio);
-    if (!hasZoneFilter && b.zoom < ZOOM_MIN) { setPoints([]); return; }
-    setLoading(true);
-    setError(null);
-    try {
+  const { data: points = [], isFetching: loading, error: queryError } = useQuery({
+    queryKey: ["tertiaire-list", submitted],
+    queryFn: async () => {
+      const s = submitted!;
       const params = new URLSearchParams();
-      if (!hasZoneFilter) {
-        params.set("bbox", `${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`);
-      }
-      if (filterSecteur) params.set("secteur", filterSecteur);
-      if (filterDpe) params.set("dpe", filterDpe);
-      if (filterCp) params.set("cp", filterCp);
-      if (filterCommune) params.set("commune", filterCommune);
-      if (filterSurfaceMin) params.set("surfaceMin", filterSurfaceMin);
-      if (filterSurfaceMax) params.set("surfaceMax", filterSurfaceMax);
-      if (filterYearMin) params.set("yearMin", filterYearMin);
-      if (filterYearMax) params.set("yearMax", filterYearMax);
-      if (filterProprio) params.set("proprietaire", filterProprio);
+      if (s.bbox) params.set("bbox", `${s.bbox.minLon},${s.bbox.minLat},${s.bbox.maxLon},${s.bbox.maxLat}`);
+      if (s.secteur) params.set("secteur", s.secteur);
+      if (s.dpe) params.set("dpe", s.dpe);
+      if (s.cp) params.set("cp", s.cp);
+      if (s.commune) params.set("commune", s.commune);
+      if (s.surfaceMin) params.set("surfaceMin", s.surfaceMin);
+      if (s.surfaceMax) params.set("surfaceMax", s.surfaceMax);
+      if (s.yearMin) params.set("yearMin", s.yearMin);
+      if (s.yearMax) params.set("yearMax", s.yearMax);
+      if (s.proprio) params.set("proprietaire", s.proprio);
       params.set("limit", "5000");
       const res = await fetch(`/api/tertiaire/list?${params.toString()}`);
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = (json as { error?: string }).error ?? `HTTP ${res.status}`;
-        setError(msg);
-        return;
-      }
-      setPoints((json as { items: TertiairePoint[] }).items ?? []);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? `HTTP ${res.status}`);
+      return ((json as { items: TertiairePoint[] }).items ?? []) as TertiairePoint[];
+    },
+    enabled: submitted != null,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    retry: 0,
+  });
+  const error = queryError ? (queryError as Error).message : null;
+
+  // Construit le snapshot de recherche depuis la bbox courante + filtres.
+  // La carte ne recharge qu'au clic « Rechercher » (pas en bougeant/zoomant).
+  const fetchPoints = useCallback(() => {
+    const b = boundsRef.current;
+    // Si filtres CP/commune/proprio actifs → on ignore le bbox (recherche globale)
+    const hasZoneFilter = Boolean(filterCp || filterCommune || filterProprio);
+    if (!hasZoneFilter && b.zoom < ZOOM_MIN) { setSubmitted(null); return; }
+    setSubmitted({
+      bbox: hasZoneFilter ? null : { minLon: b.minLon, minLat: b.minLat, maxLon: b.maxLon, maxLat: b.maxLat },
+      secteur: filterSecteur, dpe: filterDpe, cp: filterCp, commune: filterCommune,
+      surfaceMin: filterSurfaceMin, surfaceMax: filterSurfaceMax,
+      yearMin: filterYearMin, yearMax: filterYearMax, proprio: filterProprio,
+    });
   }, [filterSecteur, filterDpe, filterCp, filterCommune, filterSurfaceMin, filterSurfaceMax, filterYearMin, filterYearMax, filterProprio]);
 
-  // La carte ne fetch PLUS automatiquement quand on bouge / zoom — uniquement
-  // sur clic du bouton "Rechercher". On garde la bbox à jour pour le prochain
-  // submit, mais on ne déclenche aucune requête.
   const onBoundsChange = useCallback((b: MapBounds) => {
     boundsRef.current = b;
   }, []);

@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import Link from "next/link";
 import { Loader2, Search, Home, Building, ExternalLink, Plus, Download, Eye, SlidersHorizontal, List, Map as MapIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -113,13 +114,19 @@ export function MaisonsZoneSearch({
   const [dpeAncien, setDpeAncien] = useState("");
   const [advanced, setAdvanced] = useState(false);
 
-  const [items, setItems] = useState<MaisonDpe[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAdding, setBulkAdding] = useState(false);
   const [view, setView] = useState<"list" | "map">("list");
   const [mapSelected, setMapSelected] = useState<MaisonDpe | null>(null);
+  // Snapshot des filtres au moment du clic « Rechercher ». Sert de clé de
+  // cache TanStack Query → relancer une recherche identique réaffiche
+  // instantanément (et ne refetch pas l'API ADEME).
+  const [submitted, setSubmitted] = useState<{
+    cp: string; commune: string; dpe: string[]; ges: string[];
+    consoMin: string; consoMax: string; surfaceMin: string; surfaceMax: string;
+    yearMin: string; yearMax: string; energie: string[];
+    isolationMurs: boolean; dpeAncien: string;
+  } | null>(null);
 
   const toggleClass = (c: string) => {
     const next = new Set(dpeClasses);
@@ -146,41 +153,69 @@ export function MaisonsZoneSearch({
     setSelected(next);
   };
 
-  const search = async () => {
-    if (!cp.trim() && !commune.trim()) {
-      toast.error("Saisissez au moins un CP ou une commune");
-      return;
-    }
-    setLoading(true);
-    setItems([]);
-    setSelected(new Set());
-    try {
+  const { data, isFetching } = useQuery({
+    queryKey: [apiSegment, "zone", submitted],
+    queryFn: async () => {
+      const f = submitted!;
       const sp = new URLSearchParams();
-      if (cp.trim()) sp.set("cp", cp.trim());
-      if (commune.trim()) sp.set("commune", commune.trim());
-      if (dpeClasses.size > 0) sp.set("dpe", [...dpeClasses].join(","));
-      if (gesClasses.size > 0) sp.set("ges", [...gesClasses].join(","));
-      if (consoMin.trim()) sp.set("consoMin", consoMin.trim());
-      if (consoMax.trim()) sp.set("consoMax", consoMax.trim());
-      if (surfaceMin.trim()) sp.set("surfaceMin", surfaceMin.trim());
-      if (surfaceMax.trim()) sp.set("surfaceMax", surfaceMax.trim());
-      if (yearMin.trim()) sp.set("yearMin", yearMin.trim());
-      if (yearMax.trim()) sp.set("yearMax", yearMax.trim());
-      if (energies.size > 0) sp.set("energie", [...energies].join(","));
-      if (isolationMurs) sp.set("isolationMursMauvaise", "1");
-      if (dpeAncien.trim()) sp.set("dpeAncienAnnees", dpeAncien.trim());
+      if (f.cp) sp.set("cp", f.cp);
+      if (f.commune) sp.set("commune", f.commune);
+      if (f.dpe.length) sp.set("dpe", f.dpe.join(","));
+      if (f.ges.length) sp.set("ges", f.ges.join(","));
+      if (f.consoMin) sp.set("consoMin", f.consoMin);
+      if (f.consoMax) sp.set("consoMax", f.consoMax);
+      if (f.surfaceMin) sp.set("surfaceMin", f.surfaceMin);
+      if (f.surfaceMax) sp.set("surfaceMax", f.surfaceMax);
+      if (f.yearMin) sp.set("yearMin", f.yearMin);
+      if (f.yearMax) sp.set("yearMax", f.yearMax);
+      if (f.energie.length) sp.set("energie", f.energie.join(","));
+      if (f.isolationMurs) sp.set("isolationMursMauvaise", "1");
+      if (f.dpeAncien) sp.set("dpeAncienAnnees", f.dpeAncien);
       sp.set("limit", "500");
 
       const r = await fetch(`/api/${apiSegment}/search?${sp}`);
       const j = await r.json();
-      if (r.ok) {
-        setItems(j.items);
-        setTotal(j.total);
-        onResults?.({ items: j.items, total: j.total });
-      } else toast.error(j?.error || "Erreur");
-    } finally {
-      setLoading(false);
+      if (!r.ok) {
+        toast.error(j?.error || "Erreur");
+        throw new Error(j?.error || "Erreur");
+      }
+      return j as ZoneSearchEvent;
+    },
+    enabled: submitted != null,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    retry: 0,
+  });
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const loading = isFetching;
+
+  useEffect(() => {
+    if (data) onResults?.({ items: data.items, total: data.total });
+  }, [data, onResults]);
+
+  const search = () => {
+    if (!cp.trim() && !commune.trim()) {
+      toast.error("Saisissez au moins un CP ou une commune");
+      return;
     }
+    setSelected(new Set());
+    setSubmitted({
+      cp: cp.trim(),
+      commune: commune.trim(),
+      dpe: [...dpeClasses].sort(),
+      ges: [...gesClasses].sort(),
+      consoMin: consoMin.trim(),
+      consoMax: consoMax.trim(),
+      surfaceMin: surfaceMin.trim(),
+      surfaceMax: surfaceMax.trim(),
+      yearMin: yearMin.trim(),
+      yearMax: yearMax.trim(),
+      energie: [...energies].sort(),
+      isolationMurs,
+      dpeAncien: dpeAncien.trim(),
+    });
   };
 
   const bulkAdd = async () => {
